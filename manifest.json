@@ -4,8 +4,8 @@
   "description": "광고 없는 소설 전용 텍스트 리더",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#f7f2e8",
-  "theme_color": "#8c6b45",
+  "background_color": "#121316",
+  "theme_color": "#121316",
   "orientation": "any",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },

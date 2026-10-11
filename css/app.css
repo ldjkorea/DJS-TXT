@@ -14,9 +14,16 @@
   --letter-spacing: 0.01em;
   --side-pad: 16px;
   --para-gap: 0.85em;
-  --body-font: 'Noto Serif', 'Nanum Myeongjo', 'Batang', serif;
+  --text-indent: 0em;
+  --body-font: 'Noto Serif KR', 'Noto Serif', 'Nanum Myeongjo', 'Batang', serif;
   --font-weight: 400;
-  --ui-font: -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+  --ui-font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+}
+[data-theme="graphite"] {
+  --bg: #121316; --bg-grad: #181a1f; --text: #e2e4e9;
+  --accent: #d4b483; --accent-soft: #e5cb9f;
+  --surface: #1a1c23; --surface-2: #242731;
+  --border: #2d313d; --muted: #8b92a2; --shadow: rgba(0,0,0,0.7);
 }
 [data-theme="light"] {
   --bg: #fbfaf8; --bg-grad: #f6f5f2; --text: #1c1c1c;
@@ -674,4 +681,65 @@ body {
 @media (max-width: 360px) {
   :root { --side-pad: 18px; }
   #library { padding-left: 13px; padding-right: 13px; }
+}
+
+/* ════════ 테마 칩: 흑연(Matte Black) ════════ */
+.theme-chip.tc-graphite {
+  background: #121316;
+  box-shadow: inset 0 0 0 1.5px #d4b483;
+}
+
+/* ════════ 단락 들여쓰기 ════════ */
+.para {
+  margin-bottom: var(--para-gap);
+  text-indent: var(--text-indent, 0em);
+  word-break: var(--word-break, keep-all);
+}
+
+/* ════════ 상단 미니 HUD ════════ */
+#reader-hud {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 180;
+  display: none;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(env(safe-area-inset-top) + 6px) calc(var(--side-pad) + 4px) 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  opacity: 0.65;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+  user-select: none;
+}
+#reader-hud.show { display: flex; }
+#reader-hud.hide { opacity: 0; }
+#hud-title {
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ════════ 좌우 페이징(Page-turn) 모드 ════════ */
+#reader.mode-page {
+  overflow: hidden !important;
+  touch-action: pan-y;
+}
+#reader.mode-page #reader-content {
+  height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  padding-top: calc(env(safe-area-inset-top) + 26px);
+  padding-bottom: calc(env(safe-area-inset-bottom) + 26px);
+  padding-left: var(--side-pad);
+  padding-right: var(--side-pad);
+  overflow: hidden;
+}
+#reader.mode-page #text-display {
+  display: block;
+  column-width: calc(100vw - var(--side-pad) * 2);
+  column-gap: calc(var(--side-pad) * 2);
+  column-fill: auto;
+  height: 100%;
+  transition: transform 0.22s cubic-bezier(0.2, 0, 0.1, 1);
 }

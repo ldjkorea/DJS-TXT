@@ -49,7 +49,7 @@ const Meta = {
   books() { try { return JSON.parse(localStorage.getItem('nr-books') || '{}'); } catch(e) { return {}; } },
   saveBooks(b) { try { localStorage.setItem('nr-books', JSON.stringify(b)); return true; } catch(e) { return false; } },
   cfg() {
-    const def = { font: 19, line: 1.9, pad: 22, gap: 0.7, fontFamily: 'serif', weight: 400, theme: 'sepia', brightness: 0, asSpeed: 3, wrap: 'keep-all' };
+    const def = { font: 19, line: 1.9, pad: 22, gap: 0.7, fontFamily: 'serif', weight: 400, theme: 'graphite', brightness: 0, asSpeed: 3, wrap: 'keep-all', indent: 0, viewMode: 'scroll' };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('nr-cfg') || '{}')); } catch(e) { return def; }
   },
   saveCfg(c) { try { localStorage.setItem('nr-cfg', JSON.stringify(c)); } catch(e) {} },
@@ -83,16 +83,22 @@ function applyCfg() {
   r.style.setProperty('--line-height', cfg.line);
   r.style.setProperty('--side-pad', cfg.pad + 'px');
   r.style.setProperty('--para-gap', cfg.gap + 'em');
+  r.style.setProperty('--text-indent', (cfg.indent ? 1 : 0) + 'em');
   r.style.setProperty('--font-weight', cfg.weight);
   r.style.setProperty('--word-break', cfg.wrap === 'break-all' ? 'break-all' : 'keep-all');
   r.style.setProperty('--body-font', cfg.fontFamily === 'sans'
-    ? "-apple-system,'Apple SD Gothic Neo','Noto Sans KR','Malgun Gothic',sans-serif"
-    : "'Noto Serif','Nanum Myeongjo','Batang',serif");
+    ? '"Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif'
+    : '"Noto Serif KR", "Noto Serif", "Nanum Myeongjo", "Batang", serif');
   document.body.removeAttribute('data-theme');
   if (cfg.theme !== 'sepia') document.body.setAttribute('data-theme', cfg.theme);
   document.getElementById('brightness-veil').style.opacity = cfg.brightness / 100;
   document.querySelector('meta[name=theme-color]').setAttribute('content',
-    getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#9b6f2f');
+    getComputedStyle(document.body).getPropertyValue('--bg').trim() || '#121316');
+
+  // 독서 모드 토글
+  const readerEl = document.getElementById('reader');
+  if (readerEl) readerEl.classList.toggle('mode-page', cfg.viewMode === 'page');
+
   // UI 동기화
   setText('v-font', cfg.font); setText('v-line', cfg.line.toFixed(1));
   setText('v-pad', cfg.pad); setText('v-gap', cfg.gap.toFixed(1));
@@ -100,6 +106,8 @@ function applyCfg() {
   document.getElementById('brightness-slider').value = cfg.brightness;
   document.querySelectorAll('[data-font]').forEach(b => b.classList.toggle('active', b.dataset.font === cfg.fontFamily));
   document.querySelectorAll('[data-weight]').forEach(b => b.classList.toggle('active', +b.dataset.weight === cfg.weight));
+  document.querySelectorAll('[data-indent]').forEach(b => b.classList.toggle('active', +b.dataset.indent === (cfg.indent ? 1 : 0)));
+  document.querySelectorAll('[data-viewmode]').forEach(b => b.classList.toggle('active', b.dataset.viewmode === cfg.viewMode));
   document.querySelectorAll('[data-wrap]').forEach(b => b.classList.toggle('active', b.dataset.wrap === cfg.wrap));
   document.querySelectorAll('[data-theme]').forEach(b => b.classList.toggle('active', b.dataset.theme === cfg.theme));
 }
@@ -166,10 +174,10 @@ function toast(msg) {
 }
 
 /* ════════════════════ 챕터 감지 ════════════════════ */
-const CH_RE = /^\s*(?:(?:제\s*)?\d+\s*[장화권부편회막](?=[\s:.·\-—~!?]|$)|[一二三四五六七八九十百千]+\s*[장화권부편회막](?=[\s:.·\-—~!?]|$)|프롤로그|에필로그|서장|종장|서막|종막|외전|번외)\s*.{0,40}$|^\s*(?:chapter|prologue|epilogue|part)\b.{0,40}$/i;
+const CH_RE = /^\s*(?:(?:제\s*)?\d+\s*[장화권부편회막절](?=[\s:.·\-—~!?]|$)|\[\s*(?:제\s*)?\d+\s*[장화권부편회막절]?\s*\]|【\s*(?:제\s*)?\d+\s*[장화권부편회막절]?\s*】|\(\s*(?:제\s*)?\d+\s*[장화권부편회막절]?\s*\)|#\s*\d+\b|\d+\s*[화장]\.|\d+\s*[-~.]\s*\d+\s*[화장]|[一二三四五六七八九十百千]+\s*[장화권부편회막절](?=[\s:.·\-—~!?]|$)|프롤로그|에필로그|서장|종장|서막|종막|외전|번외|후기|작가의\s*말)\s*.{0,50}$|^\s*(?:chapter|prologue|epilogue|part|episode|ep\.)\s*\b.{0,50}$/i;
 function isChapter(line) {
   const t = line.trim();
-  if (!t || t.length > 50) return false;
+  if (!t || t.length > 55) return false;
   return CH_RE.test(t);
 }
 
@@ -469,6 +477,8 @@ function loadContent(id, name, raw) {
   document.getElementById('reader').classList.add('show');
   document.getElementById('toolbar').classList.add('show');
   document.getElementById('status-bar').classList.add('show');
+  const hud = document.getElementById('reader-hud');
+  if (hud) { hud.classList.add('show'); updateHUD(); }
   hideUI();
 
   const CHUNK = 320;
@@ -870,10 +880,30 @@ document.getElementById('as-stop').addEventListener('click', stopAutoScroll);
 document.getElementById('as-slower').addEventListener('click', () => { cfg.asSpeed = Math.max(1, cfg.asSpeed - 1); setText('as-speed', cfg.asSpeed); saveCfg(); });
 document.getElementById('as-faster').addEventListener('click', () => { cfg.asSpeed = Math.min(10, cfg.asSpeed + 1); setText('as-speed', cfg.asSpeed); saveCfg(); });
 
-/* ════════════════════ UI 토글 (탭) ════════════════════ */
+/* ════════════════════ 독서 HUD (시계 & 배터리) ════════════════════ */
+let hudBatteryLevel = null;
+if (navigator.getBattery) {
+  navigator.getBattery().then(b => {
+    hudBatteryLevel = Math.round(b.level * 100);
+    b.addEventListener('levelchange', () => { hudBatteryLevel = Math.round(b.level * 100); updateHUD(); });
+  }).catch(() => {});
+}
+function updateHUD() {
+  const hud = document.getElementById('reader-hud');
+  if (!hud || !curBook) return;
+  const now = new Date();
+  const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  setText('hud-time', timeStr);
+  setText('hud-title', (curBook.name || '').replace(/\.txt$/i, ''));
+  setText('hud-battery', hudBatteryLevel != null ? hudBatteryLevel + '%' : '');
+}
+setInterval(updateHUD, 15000);
+
+/* ════════════════════ UI 토글 (3분할 탭) ════════════════════ */
 function setUIVisibility(visible) {
   const next = Boolean(visible);
   const content = document.getElementById('reader-content');
+  const hud = document.getElementById('reader-hud');
   if (next === uiVisible) {
     content.classList.toggle('ui-visible', next);
     return;
@@ -883,6 +913,7 @@ function setUIVisibility(visible) {
   uiVisible = next;
   document.getElementById('toolbar').classList.toggle('hide', !next);
   document.getElementById('status-bar').classList.toggle('hide', !next);
+  if (hud) hud.classList.toggle('hide', next);
   content.classList.toggle('ui-visible', next);
   if (curBook) {
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -893,15 +924,44 @@ function setUIVisibility(visible) {
 }
 function showUI() { setUIVisibility(true); }
 function hideUI() { setUIVisibility(false); }
+
 document.addEventListener('click', e => {
   if (!document.getElementById('reader').classList.contains('show')) return;
-  if (e.target.closest('#toolbar, #sheet, #overlay, #autoscroll-ind, button, input, a')) return;
+  if (e.target.closest('#toolbar, #sheet, #overlay, #autoscroll-ind, button, input, a, select')) return;
   const now = Date.now();
-  if (now - lastTap < 280) return;
+  if (now - lastTap < 260) return;
   lastTap = now;
   if (sheetOpen) { closeSheet(); return; }
   if (autoScrolling) { stopAutoScroll(); return; }
-  uiVisible ? hideUI() : showUI();
+
+  // 3분할 탭 영역: 좌측 25% (이전), 우측 55% (다음), 중앙 20% (메뉴)
+  const x = e.clientX;
+  const width = window.innerWidth;
+  const leftBound = width * 0.25;
+  const rightBound = width * 0.80;
+
+  if (cfg.viewMode === 'page') {
+    // 좌우 페이징 모드
+    const content = document.getElementById('reader-content');
+    const step = content ? content.clientWidth : width;
+    if (x < leftBound) {
+      content.scrollBy({ left: -step, behavior: 'smooth' });
+    } else if (x > rightBound) {
+      content.scrollBy({ left: step, behavior: 'smooth' });
+    } else {
+      uiVisible ? hideUI() : showUI();
+    }
+    return;
+  }
+
+  // 세로 스크롤 모드
+  if (x < leftBound) {
+    window.scrollBy({ top: -window.innerHeight * 0.75, behavior: 'smooth' });
+  } else if (x > rightBound) {
+    window.scrollBy({ top: window.innerHeight * 0.75, behavior: 'smooth' });
+  } else {
+    uiVisible ? hideUI() : showUI();
+  }
 });
 
 /* ════════════════════ 시트 ════════════════════ */
@@ -957,6 +1017,12 @@ document.querySelectorAll('[data-font]').forEach(button => button.addEventListen
 document.querySelectorAll('[data-weight]').forEach(button => button.addEventListener('click', () => {
   updateCfgKeepingPlace(() => { cfg.weight = Number(button.dataset.weight); });
 }));
+document.querySelectorAll('[data-indent]').forEach(button => button.addEventListener('click', () => {
+  updateCfgKeepingPlace(() => { cfg.indent = Number(button.dataset.indent); });
+}));
+document.querySelectorAll('[data-viewmode]').forEach(button => button.addEventListener('click', () => {
+  updateCfgKeepingPlace(() => { cfg.viewMode = button.dataset.viewmode; });
+}));
 document.querySelectorAll('[data-wrap]').forEach(button => button.addEventListener('click', () => {
   updateCfgKeepingPlace(() => { cfg.wrap = button.dataset.wrap; });
 }));
@@ -969,6 +1035,76 @@ document.getElementById('brightness-slider').addEventListener('input', e => {
 });
 document.getElementById('brightness-slider').addEventListener('change', saveCfg);
 
+/* ════════════════════ 서재 백업 및 복원 ════════════════════ */
+function exportLibraryData() {
+  try {
+    const data = {
+      version: 2,
+      exportedAt: Date.now(),
+      books: Meta.books(),
+      cfg: Meta.cfg(),
+      lastBook: Meta.lastBook()
+    };
+    const jsonStr = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const d = new Date();
+    const dateStr = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+    a.href = url;
+    a.download = 'txtreader_backup_' + dateStr + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('서재 데이터가 저장되었어요');
+  } catch(e) {
+    toast('백업 파일을 생성하지 못했어요');
+  }
+}
+
+function importLibraryData(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data || typeof data !== 'object' || !data.books) {
+        throw new Error('형식 불일치');
+      }
+      const curBooks = Meta.books();
+      Object.assign(curBooks, data.books);
+      Meta.saveBooks(curBooks);
+      if (data.cfg) {
+        cfg = Object.assign(cfg, data.cfg);
+        Meta.saveCfg(cfg);
+        applyCfg();
+      }
+      if (data.lastBook && curBooks[data.lastBook]) {
+        Meta.setLast(data.lastBook);
+      }
+      renderLibrary();
+      toast('서재 데이터가 성공적으로 복원되었어요');
+    } catch(err) {
+      toast('백업 파일을 복원하지 못했어요: ' + (err.message || '오류'));
+    }
+  };
+  reader.readAsText(file);
+}
+
+const btnExport = document.getElementById('btn-export-data');
+if (btnExport) btnExport.addEventListener('click', exportLibraryData);
+const btnImport = document.getElementById('btn-import-data');
+const backupInput = document.getElementById('backup-input');
+if (btnImport && backupInput) {
+  btnImport.addEventListener('click', () => backupInput.click());
+  backupInput.addEventListener('change', e => {
+    const file = (e.target.files || [])[0];
+    e.target.value = '';
+    if (file) importLibraryData(file);
+  });
+}
+
 /* ════════════════════ 서재 복귀 ════════════════════ */
 document.getElementById('btn-home').addEventListener('click', () => {
   saveNow(); stopAutoScroll(); closeSheet();
@@ -977,6 +1113,8 @@ document.getElementById('btn-home').addEventListener('click', () => {
   document.getElementById('reader').classList.remove('show');
   document.getElementById('toolbar').classList.remove('show');
   document.getElementById('status-bar').classList.remove('show');
+  const hud = document.getElementById('reader-hud');
+  if (hud) hud.classList.remove('show');
   document.getElementById('progress-bar').style.transform = 'scaleX(0)';
   document.getElementById('library').style.display = 'block';
   window.scrollTo(0, 0);

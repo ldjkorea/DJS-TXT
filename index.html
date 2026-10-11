@@ -6,17 +6,29 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="소설 리더">
-<meta name="theme-color" content="#8c6b45">
+<meta name="theme-color" content="#121316">
 <link rel="icon" type="image/png" href="./icon-192.png">
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./icon-192.png">
 <title>소설 리더</title>
+<!-- Pretendard & Noto Serif KR fonts -->
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./css/app.css">
 </head>
 <body>
 
 <div id="progress-bar"></div>
 <div id="brightness-veil"></div>
+
+<!-- 독서 중 상단 미니 HUD (시계 & 배터리) -->
+<div id="reader-hud">
+  <span id="hud-time"></span>
+  <span id="hud-title"></span>
+  <span id="hud-battery"></span>
+</div>
 
 <!-- 상단 툴바 -->
 <div id="toolbar">
@@ -160,16 +172,23 @@
     </div>
 
     <div class="set-block">
-      <div class="set-block-title">글꼴</div>
+      <div class="set-block-title">글꼴 및 서식</div>
       <div class="pill-row">
         <button class="pill font-serif" data-font="serif">명조체</button>
-        <button class="pill font-sans" data-font="sans">고딕체</button>
+        <button class="pill font-sans" data-font="sans">고딕체(Pretendard)</button>
       </div>
       <div class="set-row" style="margin-top:6px">
         <span class="set-label">굵기</span>
         <div class="pill-row">
           <button class="pill" data-weight="400">보통</button>
           <button class="pill" data-weight="700">굵게</button>
+        </div>
+      </div>
+      <div class="set-row" style="margin-top:6px">
+        <span class="set-label">들여쓰기</span>
+        <div class="pill-row">
+          <button class="pill" data-indent="0">없음</button>
+          <button class="pill" data-indent="1">1글자</button>
         </div>
       </div>
       <div class="set-row" style="margin-top:6px">
@@ -182,13 +201,22 @@
     </div>
 
     <div class="set-block">
+      <div class="set-block-title">독서 방식</div>
+      <div class="pill-row">
+        <button class="pill" data-viewmode="scroll">세로 스크롤</button>
+        <button class="pill" data-viewmode="page">좌우 넘김 (페이징)</button>
+      </div>
+    </div>
+
+    <div class="set-block">
       <div class="set-block-title">테마</div>
       <div class="theme-grid">
-        <button class="theme-chip tc-sepia" data-theme="sepia"></button>
-        <button class="theme-chip tc-light" data-theme="light"></button>
-        <button class="theme-chip tc-dark" data-theme="dark"></button>
-        <button class="theme-chip tc-night" data-theme="night"></button>
-        <button class="theme-chip tc-green" data-theme="green"></button>
+        <button class="theme-chip tc-graphite" data-theme="graphite" aria-label="흑연 매트블랙"></button>
+        <button class="theme-chip tc-sepia" data-theme="sepia" aria-label="세피아"></button>
+        <button class="theme-chip tc-light" data-theme="light" aria-label="화이트"></button>
+        <button class="theme-chip tc-dark" data-theme="dark" aria-label="다크"></button>
+        <button class="theme-chip tc-night" data-theme="night" aria-label="순수 블랙"></button>
+        <button class="theme-chip tc-green" data-theme="green" aria-label="올리브"></button>
       </div>
     </div>
 
@@ -201,10 +229,17 @@
     </div>
 
     <div class="set-block">
-      <div class="set-block-title">읽기 도구</div>
+      <div class="set-block-title">읽기 도구 & 데이터</div>
       <div class="set-row">
         <span class="set-label">자동 스크롤</span>
         <button class="pill" id="autoscroll-toggle">시작</button>
+      </div>
+      <div class="set-row" style="margin-top:8px">
+        <span class="set-label">서재 데이터</span>
+        <div class="pill-row">
+          <button class="pill" id="btn-export-data">백업 저장</button>
+          <button class="pill" id="btn-import-data">백업 복원</button>
+        </div>
       </div>
     </div>
   </div>
@@ -227,6 +262,7 @@
 </div>
 
 <input type="file" id="file-input" accept=".txt,text/plain" multiple style="display:none">
+<input type="file" id="backup-input" accept=".json,application/json" style="display:none">
 <div id="loading"><div class="spinner"></div><span id="loading-msg">불러오는 중...</span></div>
 <div id="toast"></div>
 
