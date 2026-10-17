@@ -16,8 +16,9 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
-import android.webkit.JsResult;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsResult;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -26,10 +27,11 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
-
-import org.json.JSONObject;
+import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -45,14 +47,57 @@ public class MainActivity extends Activity {
 
     private WebView mWebView;
     private boolean mPageLoaded = false;
-    private String mPendingTitle = null;
-    private String mPendingContent = null;
+    private final AndroidBridge mBridge = new AndroidBridge();
+
+    public class AndroidBridge {
+        private String mPendingTitle = null;
+        private String mPendingContent = null;
+
+        public synchronized void setPending(String title, String content) {
+            this.mPendingTitle = title;
+            this.mPendingContent = content;
+        }
+
+        @JavascriptInterface
+        public synchronized boolean hasPendingFile() {
+            return mPendingContent != null && mPendingContent.length() > 0;
+        }
+
+        @JavascriptInterface
+        public synchronized String pullPendingTitle() {
+            String t = mPendingTitle;
+            mPendingTitle = null;
+            return t != null ? t : "가져온 텍스트.txt";
+        }
+
+        @JavascriptInterface
+        public synchronized String pullPendingContent() {
+            String c = mPendingContent;
+            mPendingContent = null;
+            return c != null ? c : "";
+        }
+
+        @JavascriptInterface
+        public void checkUpdate() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    AutoUpdater.check(MainActivity.this, true);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public String getVersionName() {
+            return AutoUpdater.CURRENT_VERSION_NAME;
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // 상단 상태바 색상 무광 흑연 동기화 (#121316)
+        // 상단 상태바 및 내비게이션 바 색상 무광 흑연 동기화 (#121316)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             Window window = getWindow();
             window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
@@ -75,25 +120,7 @@ public class MainActivity extends Activity {
         // 초기 인텐트 처리
         handleIntent(getIntent());
 
-        // 웹뷰 자바스크립트 브릿지 등록 (인앱 업데이트 확인 및 버전 조회 연동)
-        mWebView.addJavascriptInterface(new Object() {
-            @JavascriptInterface
-            public void checkUpdate() {
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        AutoUpdater.check(MainActivity.this, true);
-                    }
-                });
-            }
-
-            @JavascriptInterface
-            public String getVersionName() {
-                return AutoUpdater.CURRENT_VERSION_NAME;
-            }
-        }, "AndroidBridge");
-
-        // 온라인 여부 확인 후 로드 (온라인이면 항상 최신 GitHub Pages, 오프라인이면 내장 번들)
+        // 온라인 여부 확인 후 로드 (온라인이면 최신 GitHub Pages, 오프라인이면 내장 번들)
         if (isOnline()) {
             mWebView.loadUrl(REMOTE_URL);
         } else {
@@ -119,18 +146,19 @@ public class MainActivity extends Activity {
         ws.setMediaPlaybackRequiresUserGesture(false);
         ws.setCacheMode(WebSettings.LOAD_DEFAULT);
 
+        mWebView.addJavascriptInterface(mBridge, "AndroidBridge");
+
         mWebView.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 mPageLoaded = true;
-                deliverPendingFile();
+                notifyNativeFileReady();
             }
 
             @Override
             public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 super.onReceivedError(view, request, error);
-                // 주 URL 로드 실패 시 내장 오프라인 번들로 자동 전환
                 if (request != null && request.isForMainFrame()) {
                     String reqUrl = request.getUrl().toString();
                     if (reqUrl.startsWith("http")) {
@@ -179,7 +207,6 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleIntent(intent);
-        deliverPendingFile();
     }
 
     private void handleIntent(Intent intent) {
@@ -205,8 +232,8 @@ public class MainActivity extends Activity {
         if (uri != null) {
             readTextFromUri(uri);
         } else if (directText != null && directText.length() > 0) {
-            mPendingTitle = "공유된 텍스트.txt";
-            mPendingContent = directText;
+            mBridge.setPending("공유된 텍스트.txt", directText);
+            notifyNativeFileReady();
         }
     }
 
@@ -216,11 +243,39 @@ public class MainActivity extends Activity {
             public void run() {
                 try {
                     String fileName = resolveFileName(uri);
-                    InputStream is = getContentResolver().openInputStream(uri);
-                    if (is == null) return;
+                    InputStream is = null;
+
+                    // 1. ContentResolver 통해 열기
+                    try {
+                        is = getContentResolver().openInputStream(uri);
+                    } catch (Exception e) {
+                        Log.w(TAG, "ContentResolver.openInputStream failed: " + e.getMessage());
+                    }
+
+                    // 2. 만약 file:// 스킴이고 실패했다면 직접 File 열기 시도
+                    if (is == null && "file".equalsIgnoreCase(uri.getScheme())) {
+                        String path = uri.getPath();
+                        if (path != null) {
+                            File f = new File(path);
+                            if (f.exists() && f.canRead()) {
+                                is = new FileInputStream(f);
+                            }
+                        }
+                    }
+
+                    if (is == null) {
+                        Log.e(TAG, "Cannot open stream for URI: " + uri);
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(MainActivity.this, "파일을 읽을 수 없습니다. (권한 또는 경로 오류)", Toast.LENGTH_SHORT).show();
+                            }
+                        });
+                        return;
+                    }
 
                     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                    byte[] temp = new byte[8192];
+                    byte[] temp = new byte[16384];
                     int read;
                     while ((read = is.read(temp)) != -1) {
                         buffer.write(temp, 0, read);
@@ -229,13 +284,12 @@ public class MainActivity extends Activity {
                     byte[] bytes = buffer.toByteArray();
 
                     String text = decodeText(bytes);
-                    mPendingTitle = fileName;
-                    mPendingContent = text;
+                    mBridge.setPending(fileName, text);
 
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
-                            deliverPendingFile();
+                            notifyNativeFileReady();
                         }
                     });
                 } catch (Exception e) {
@@ -292,27 +346,38 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void deliverPendingFile() {
-        if (!mPageLoaded || mPendingContent == null || mWebView == null) return;
-        final String title = mPendingTitle != null ? mPendingTitle : "가져온 텍스트.txt";
-        final String content = mPendingContent;
-        mPendingTitle = null;
-        mPendingContent = null;
-
-        try {
-            String jsonTitle = JSONObject.quote(title);
-            String jsonContent = JSONObject.quote(content);
-            String script = "if (window.importExternalTxt) { window.importExternalTxt(" + jsonTitle + ", " + jsonContent + "); }";
-            mWebView.evaluateJavascript(script, null);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to deliver text to webview", e);
-        }
+    private void notifyNativeFileReady() {
+        if (!mPageLoaded || mWebView == null || !mBridge.hasPendingFile()) return;
+        mWebView.evaluateJavascript("if (window.onNativeFileReady) { window.onNativeFileReady(); }", null);
     }
 
     @Override
     public void onBackPressed() {
-        if (mWebView != null && mWebView.canGoBack()) {
-            mWebView.goBack();
+        if (mWebView != null) {
+            // 웹뷰 내에서 독서 화면이 열려있으면 서재로 복귀, 설정창 열려있으면 닫기, 서재면 앱 종료
+            mWebView.evaluateJavascript(
+                    "(function() {" +
+                    "  var sheet = document.getElementById('sheet');" +
+                    "  if (sheet && sheet.classList.contains('show')) {" +
+                    "    var btnClose = document.getElementById('sheet-close'); if (btnClose) btnClose.click();" +
+                    "    return 'consumed';" +
+                    "  }" +
+                    "  var reader = document.getElementById('reader');" +
+                    "  if (reader && reader.classList.contains('show')) {" +
+                    "    var btnHome = document.getElementById('btn-home'); if (btnHome) btnHome.click();" +
+                    "    return 'consumed';" +
+                    "  }" +
+                    "  return 'exit';" +
+                    "})()",
+                    new ValueCallback<String>() {
+                        @Override
+                        public void onReceiveValue(String value) {
+                            if (!"\"consumed\"".equals(value)) {
+                                MainActivity.super.onBackPressed();
+                            }
+                        }
+                    }
+            );
         } else {
             super.onBackPressed();
         }

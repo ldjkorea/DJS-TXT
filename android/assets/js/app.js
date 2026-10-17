@@ -1214,4 +1214,20 @@ try {
   }
 } catch(e) {}
 
+/* ════════════════════ 안드로이드 네이티브 파일 수신 브릿지 ════════════════════ */
+function checkNativePendingFile() {
+  try {
+    if (window.AndroidBridge && typeof window.AndroidBridge.hasPendingFile === 'function' && window.AndroidBridge.hasPendingFile()) {
+      const title = window.AndroidBridge.pullPendingTitle();
+      const content = window.AndroidBridge.pullPendingContent();
+      if (content) {
+        importExternalTxt(title, content);
+      }
+    }
+  } catch(e) {}
+}
+window.onNativeFileReady = checkNativePendingFile;
+checkNativePendingFile();
+
+
 
