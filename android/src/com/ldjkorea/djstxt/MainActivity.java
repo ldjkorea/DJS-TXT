@@ -17,9 +17,11 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.JsResult;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -38,7 +40,7 @@ import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends Activity {
     private static final String TAG = "DjsTxtMain";
-    private static final String REMOTE_URL = "https://ldjkorea.github.io/txtreader/";
+    private static final String REMOTE_URL = "https://ldjkorea.github.io/DJS-TXT/";
     private static final String LOCAL_ASSET_URL = "file:///android_asset/index.html";
 
     private WebView mWebView;
@@ -73,6 +75,24 @@ public class MainActivity extends Activity {
         // 초기 인텐트 처리
         handleIntent(getIntent());
 
+        // 웹뷰 자바스크립트 브릿지 등록 (인앱 업데이트 확인 및 버전 조회 연동)
+        mWebView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void checkUpdate() {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        AutoUpdater.check(MainActivity.this, true);
+                    }
+                });
+            }
+
+            @JavascriptInterface
+            public String getVersionName() {
+                return AutoUpdater.CURRENT_VERSION_NAME;
+            }
+        }, "AndroidBridge");
+
         // 온라인 여부 확인 후 로드 (온라인이면 항상 최신 GitHub Pages, 오프라인이면 내장 번들)
         if (isOnline()) {
             mWebView.loadUrl(REMOTE_URL);
@@ -81,7 +101,7 @@ public class MainActivity extends Activity {
         }
 
         // 백그라운드 APK 버전 자동 업데이트 체크
-        UpdateChecker.checkForUpdates(this);
+        AutoUpdater.check(this, false);
     }
 
     private void initWebSettings() {
@@ -117,6 +137,15 @@ public class MainActivity extends Activity {
                         Log.w(TAG, "Network failed, falling back to local asset: " + reqUrl);
                         view.loadUrl(LOCAL_ASSET_URL);
                     }
+                }
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse errorResponse) {
+                super.onReceivedHttpError(view, request, errorResponse);
+                if (request != null && request.isForMainFrame() && errorResponse != null && errorResponse.getStatusCode() >= 400) {
+                    Log.w(TAG, "HTTP error " + errorResponse.getStatusCode() + ", falling back to local asset");
+                    view.loadUrl(LOCAL_ASSET_URL);
                 }
             }
         });

@@ -1196,3 +1196,22 @@ if ('launchQueue' in window && 'files' in LaunchParams.prototype) {
   });
 }
 
+/* ════════════════════ 자동 업데이트 UI 연동 ════════════════════ */
+const btnCheckUpdate = document.getElementById('btn-check-update');
+if (btnCheckUpdate) {
+  btnCheckUpdate.addEventListener('click', () => {
+    if (window.AndroidBridge && typeof window.AndroidBridge.checkUpdate === 'function') {
+      window.AndroidBridge.checkUpdate();
+    } else {
+      toast('현재 최신 웹 버전을 이용 중입니다.');
+    }
+  });
+}
+try {
+  if (window.AndroidBridge && typeof window.AndroidBridge.getVersionName === 'function') {
+    const vEl = document.getElementById('app-version-display');
+    if (vEl) vEl.textContent = 'v' + window.AndroidBridge.getVersionName();
+  }
+} catch(e) {}
+
+
