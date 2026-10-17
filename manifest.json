@@ -1,7 +1,7 @@
 {
-  "name": "소설 리더",
-  "short_name": "소설 리더",
-  "description": "광고 없는 소설 전용 텍스트 리더",
+  "name": "DJS TXT",
+  "short_name": "DJS TXT",
+  "description": "광고 없는 순수 흑연 소설 리더",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#121316",
@@ -10,5 +10,29 @@
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
-  ]
+  ],
+  "file_handlers": [
+    {
+      "action": "./index.html",
+      "name": "Text Document",
+      "accept": {
+        "text/plain": [".txt"]
+      }
+    }
+  ],
+  "share_target": {
+    "action": "./index.html",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "name",
+      "text": "description",
+      "files": [
+        {
+          "name": "txtfiles",
+          "accept": ["text/plain", ".txt"]
+        }
+      ]
+    }
+  }
 }

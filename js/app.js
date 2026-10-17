@@ -1149,3 +1149,50 @@ if ('serviceWorker' in navigator) {
 requestPersistentStorage();
 applyCfg();
 renderLibrary();
+
+/* ════════════════════ 외부 파일 수신 브릿지 (APK & PWA Launch) ════════════════════ */
+async function importExternalTxt(fileName, content) {
+  if (!content) return;
+  try {
+    const cleanName = (fileName || '가져온 텍스트').trim();
+    showLoading(cleanName + ' 여는 중...');
+    const fingerprint = await fingerprintContent(content);
+    const books = Meta.books();
+    let targetId = await findDuplicateBook(books, fingerprint, content.length, content);
+    if (!targetId) {
+      targetId = 'sha256_' + fingerprint;
+      if (!books[targetId]) {
+        const now = Date.now();
+        books[targetId] = {
+          name: cleanName, fileName: cleanName, size: content.length, fingerprint,
+          importedAt: now, lastRead: now, pos: { pIdx: 0, offset: 0, ratio: 0 },
+          progress: 0, chapter: '', bookmarks: []
+        };
+        await DB.put(targetId, content);
+        Meta.saveBooks(books);
+      }
+    }
+    hideLoading();
+    openBook(targetId);
+  } catch (err) {
+    hideLoading();
+    toast('텍스트를 열지 못했어요: ' + (err.message || '오류'));
+  }
+}
+window.importExternalTxt = importExternalTxt;
+
+// PWA File Handling API
+if ('launchQueue' in window && 'files' in LaunchParams.prototype) {
+  launchQueue.setConsumer(async (launchParams) => {
+    if (!launchParams.files || !launchParams.files.length) return;
+    for (const handle of launchParams.files) {
+      try {
+        const file = await handle.getFile();
+        const content = await readFileAsText(file);
+        await importExternalTxt(file.name, content);
+        break;
+      } catch(e) {}
+    }
+  });
+}
+

@@ -1,0 +1,7 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0.0",
+  "appName": "DJS TXT",
+  "releaseNotes": "DJS TXT 안드로이드 첫 정식 릴리즈. 외부 TXT 파일 연결 프로그램(열기/공유) 지원 및 실시간 자동 업데이트 탑재.",
+  "apkUrl": "https://raw.githubusercontent.com/ldjkorea/txtreader/main/DJS_TXT_v1.0.0.apk"
+}
