@@ -1,7 +1,7 @@
 {
-  "versionCode": 1,
-  "versionName": "1.0.0",
+  "versionCode": 200,
+  "versionName": "2.0.0",
   "appName": "DJS TXT",
-  "releaseNotes": "DJS TXT 안드로이드 첫 정식 릴리즈. 외부 TXT 파일 연결 프로그램(열기/공유) 지원 및 실시간 자동 업데이트 탑재.",
-  "apkUrl": "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/DJS_TXT_v1.0.0.apk"
+  "releaseNotes": "v2.0.0 대규모 업데이트: 하드웨어 볼륨키 페이지 넘김, 리디바탕(RIDIBatang) 서체 탑재, 독서 중 화면 켜짐 유지, 대용량 가상 렌더링 최적화, 챕터 퀵 점프 및 비목차 5% 스마트 폴백 탑재.",
+  "apkUrl": "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/DJS_TXT_v2.0.0.apk"
 }

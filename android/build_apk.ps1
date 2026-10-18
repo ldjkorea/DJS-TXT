@@ -22,6 +22,14 @@ New-Item -ItemType Directory -Path "$BUILD_DIR\gen" | Out-Null
 New-Item -ItemType Directory -Path "$BUILD_DIR\classes" | Out-Null
 New-Item -ItemType Directory -Path "$BUILD_DIR\dex" | Out-Null
 
+Write-Host "==> 0. Syncing web assets into android/assets..."
+$WEB_ROOT = "C:\Users\c\.gemini\antigravity\scratch\txtreader"
+Copy-Item -Force "$WEB_ROOT\index.html" "$BASE_DIR\assets\index.html"
+Copy-Item -Force "$WEB_ROOT\manifest.json" "$BASE_DIR\assets\manifest.json"
+Copy-Item -Force "$WEB_ROOT\sw.js" "$BASE_DIR\assets\sw.js"
+Copy-Item -Force -Recurse "$WEB_ROOT\css" "$BASE_DIR\assets\"
+Copy-Item -Force -Recurse "$WEB_ROOT\js" "$BASE_DIR\assets\"
+
 Write-Host "==> 1. Compiling resources with aapt2..."
 & $AAPT2 compile --dir "$BASE_DIR\res" -o "$BUILD_DIR\compiled_res.zip"
 
@@ -56,12 +64,14 @@ if (-not (Test-Path $KEYSTORE)) {
 }
 
 Write-Host "==> 8. Signing APK with apksigner..."
-$OUTPUT_APK = "$BASE_DIR\DJS_TXT_v1.0.0.apk"
+$OUTPUT_APK = "$BASE_DIR\DJS_TXT_v2.0.0.apk"
 if (Test-Path $OUTPUT_APK) { Remove-Item -Force $OUTPUT_APK }
 & $APKSIGNER sign --ks $KEYSTORE --ks-pass pass:djstxtpass --key-pass pass:djstxtpass --out $OUTPUT_APK "$BUILD_DIR\aligned.apk"
 
 Write-Host "==> 9. Verifying signed APK..."
 & $APKSIGNER verify -v $OUTPUT_APK
+
+Copy-Item -Force $OUTPUT_APK "$WEB_ROOT\DJS_TXT_v2.0.0.apk"
 
 $apkItem = Get-Item $OUTPUT_APK
 Write-Host "==> BUILD SUCCESS!"

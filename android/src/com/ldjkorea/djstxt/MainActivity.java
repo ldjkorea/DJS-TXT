@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
@@ -52,6 +53,8 @@ public class MainActivity extends Activity {
     public class AndroidBridge {
         private String mPendingTitle = null;
         private String mPendingContent = null;
+        private volatile boolean mVolumeKeyEnabled = true;
+        private volatile boolean mReaderActive = false;
 
         public synchronized void setPending(String title, String content) {
             this.mPendingTitle = title;
@@ -75,6 +78,43 @@ public class MainActivity extends Activity {
             String c = mPendingContent;
             mPendingContent = null;
             return c != null ? c : "";
+        }
+
+        @JavascriptInterface
+        public void setVolumeKeyEnabled(boolean enabled) {
+            this.mVolumeKeyEnabled = enabled;
+        }
+
+        @JavascriptInterface
+        public boolean isVolumeKeyEnabled() {
+            return mVolumeKeyEnabled;
+        }
+
+        @JavascriptInterface
+        public void setReaderActive(boolean active) {
+            this.mReaderActive = active;
+        }
+
+        @JavascriptInterface
+        public boolean isReaderActive() {
+            return mReaderActive;
+        }
+
+        @JavascriptInterface
+        public void setKeepScreenOn(final boolean keep) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Window window = getWindow();
+                    if (window != null) {
+                        if (keep) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                        }
+                    }
+                }
+            });
         }
 
         @JavascriptInterface
@@ -330,6 +370,16 @@ public class MainActivity extends Activity {
             return new String(bytes, 3, bytes.length - 3, StandardCharsets.UTF_8);
         }
 
+        // UTF-16 LE BOM 감지 (FF FE)
+        if (bytes.length >= 2 && bytes[0] == (byte) 0xFF && bytes[1] == (byte) 0xFE) {
+            return new String(bytes, 2, bytes.length - 2, StandardCharsets.UTF_16LE);
+        }
+
+        // UTF-16 BE BOM 감지 (FE FF)
+        if (bytes.length >= 2 && bytes[0] == (byte) 0xFE && bytes[1] == (byte) 0xFF) {
+            return new String(bytes, 2, bytes.length - 2, StandardCharsets.UTF_16BE);
+        }
+
         // UTF-8 디코딩 검증
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
         decoder.onMalformedInput(CodingErrorAction.REPORT);
@@ -337,11 +387,15 @@ public class MainActivity extends Activity {
         try {
             return decoder.decode(ByteBuffer.wrap(bytes)).toString();
         } catch (CharacterCodingException e) {
-            // 실패 시 한국어 레거시 인코딩(EUC-KR / MS949) 폴백
+            // 실패 시 한국어 확장 완성형(MS949) 폴백 (현대 한글 11,172자 완벽 수용)
             try {
-                return new String(bytes, Charset.forName("EUC-KR"));
+                return new String(bytes, Charset.forName("MS949"));
             } catch (Exception ex) {
-                return new String(bytes, StandardCharsets.UTF_8);
+                try {
+                    return new String(bytes, Charset.forName("EUC-KR"));
+                } catch (Exception ex2) {
+                    return new String(bytes, StandardCharsets.UTF_8);
+                }
             }
         }
     }
@@ -349,6 +403,30 @@ public class MainActivity extends Activity {
     private void notifyNativeFileReady() {
         if (!mPageLoaded || mWebView == null || !mBridge.hasPendingFile()) return;
         mWebView.evaluateJavascript("if (window.onNativeFileReady) { window.onNativeFileReady(); }", null);
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int action = event.getAction();
+        int keyCode = event.getKeyCode();
+
+        if (mBridge.isReaderActive() && mBridge.isVolumeKeyEnabled()) {
+            if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+                if (action == KeyEvent.ACTION_DOWN) {
+                    final String dir = (keyCode == KeyEvent.KEYCODE_VOLUME_UP) ? "up" : "down";
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (mWebView != null) {
+                                mWebView.evaluateJavascript("if (window.onVolumeKey) { window.onVolumeKey('" + dir + "'); }", null);
+                            }
+                        }
+                    });
+                }
+                return true; // 시스템 볼륨 HUD 표시 차단
+            }
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override

@@ -14,10 +14,12 @@
   --letter-spacing: 0.01em;
   --side-pad: 16px;
   --para-gap: 0.85em;
-  --text-indent: 0em;
-  --body-font: 'Noto Serif KR', 'Noto Serif', 'Nanum Myeongjo', 'Batang', serif;
+  --font-ridi: 'RIDIBatang', 'KoPub Batang', serif;
+  --font-serif: 'Noto Serif KR', 'Noto Serif', 'Nanum Myeongjo', 'Batang', serif;
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --body-font: var(--font-ridi);
   --font-weight: 400;
-  --ui-font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --ui-font: var(--font-sans);
 }
 [data-theme="graphite"] {
   --bg: #121316; --bg-grad: #181a1f; --text: #e2e4e9;
@@ -207,6 +209,11 @@ button { font-family: var(--ui-font); cursor: pointer; color: inherit; }
   content-visibility: auto; contain-intrinsic-size: auto 3em;
   transition: background 0.3s;
 }
+.para-chunk {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 800px;
+}
+.para-chunk.restore-layout { content-visibility: visible; }
 #text-display p.restore-layout { content-visibility: visible; }
 #text-display p.blank { height: var(--para-gap); margin: 0; content-visibility: visible; }
 #text-display p.chapter {
@@ -294,6 +301,7 @@ button { font-family: var(--ui-font); cursor: pointer; color: inherit; }
   font-size: 13.5px; font-weight: 600; transition: all 0.18s; color: var(--text);
 }
 .pill.active { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.pill.font-ridi { font-family: 'RIDIBatang', serif; }
 .pill.font-serif { font-family: 'Noto Serif','Nanum Myeongjo',serif; }
 .pill.font-sans { font-family: var(--ui-font); }
 
@@ -618,17 +626,20 @@ body {
 #pct-now { font-size: 11.5px; }
 .reader-progress-row {
   display: grid;
-  grid-template-columns: 34px minmax(0,1fr) 34px;
+  grid-template-columns: 44px minmax(0,1fr) 44px;
   align-items: center;
   gap: 8px;
 }
 .chapter-nav {
-  width: 34px; height: 30px; border: 0; border-radius: 9px;
+  width: 44px; height: 36px; border: 0; border-radius: 10px;
   background: transparent; color: var(--muted);
-  font-size: 23px; font-weight: 300; line-height: 1;
+  font-size: 24px; font-weight: 300; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  user-select: none; -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
 }
-.chapter-nav:active { background: var(--surface-2); color: var(--text); }
-.chapter-nav:disabled { opacity: .3; }
+.chapter-nav:active { background: var(--surface-2); color: var(--text); transform: scale(0.92); }
+.chapter-nav:disabled { opacity: .2; }
 
 #reader-progress-slider {
   --progress: 0%;

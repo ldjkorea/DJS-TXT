@@ -49,7 +49,7 @@ const Meta = {
   books() { try { return JSON.parse(localStorage.getItem('nr-books') || '{}'); } catch(e) { return {}; } },
   saveBooks(b) { try { localStorage.setItem('nr-books', JSON.stringify(b)); return true; } catch(e) { return false; } },
   cfg() {
-    const def = { font: 19, line: 1.9, pad: 22, gap: 0.7, fontFamily: 'serif', weight: 400, theme: 'graphite', brightness: 0, asSpeed: 3, wrap: 'keep-all', indent: 0, viewMode: 'scroll' };
+    const def = { font: 19, line: 1.9, pad: 22, gap: 0.7, fontFamily: 'ridi', weight: 400, theme: 'graphite', brightness: 0, asSpeed: 3, wrap: 'keep-all', indent: 0, viewMode: 'scroll', volumeKey: true, keepScreen: true };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('nr-cfg') || '{}')); } catch(e) { return def; }
   },
   saveCfg(c) { try { localStorage.setItem('nr-cfg', JSON.stringify(c)); } catch(e) {} },
@@ -70,10 +70,31 @@ let renderToken = 0;
 let importingFiles = false;
 let lastStorageWarning = 0;
 let progressDragging = false;
+let wakeLockSentinel = null;
+
 function topOffset() {
   const content = document.getElementById('reader-content');
   const padding = content ? Number.parseFloat(getComputedStyle(content).paddingTop) : NaN;
   return Number.isFinite(padding) ? padding : (uiVisible ? 64 : 24);
+}
+
+/* ════════════════════ 화면 켜짐 유지 동기화 ════════════════════ */
+async function syncKeepScreen() {
+  const shouldKeep = !!cfg.keepScreen && !!curBook && !document.hidden;
+  if (window.AndroidBridge && window.AndroidBridge.setKeepScreenOn) {
+    try { window.AndroidBridge.setKeepScreenOn(shouldKeep); } catch(e) {}
+  }
+  if ('wakeLock' in navigator) {
+    try {
+      if (shouldKeep && !wakeLockSentinel) {
+        wakeLockSentinel = await navigator.wakeLock.request('screen');
+        wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; });
+      } else if (!shouldKeep && wakeLockSentinel) {
+        await wakeLockSentinel.release();
+        wakeLockSentinel = null;
+      }
+    } catch(e) {}
+  }
 }
 
 /* ════════════════════ 설정 적용 ════════════════════ */
@@ -86,9 +107,18 @@ function applyCfg() {
   r.style.setProperty('--text-indent', (cfg.indent ? 1 : 0) + 'em');
   r.style.setProperty('--font-weight', cfg.weight);
   r.style.setProperty('--word-break', cfg.wrap === 'break-all' ? 'break-all' : 'keep-all');
-  r.style.setProperty('--body-font', cfg.fontFamily === 'sans'
-    ? '"Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif'
-    : '"Noto Serif KR", "Noto Serif", "Nanum Myeongjo", "Batang", serif');
+
+  let fontValue;
+  if (cfg.fontFamily === 'sans') {
+    fontValue = '"Pretendard Variable", Pretendard, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif';
+  } else if (cfg.fontFamily === 'serif') {
+    fontValue = '"Noto Serif KR", "Noto Serif", "Nanum Myeongjo", "Batang", serif';
+  } else {
+    // ridi (기본값)
+    fontValue = "'RIDIBatang', 'KoPub Batang', serif";
+  }
+  r.style.setProperty('--body-font', fontValue);
+
   document.body.removeAttribute('data-theme');
   if (cfg.theme !== 'sepia') document.body.setAttribute('data-theme', cfg.theme);
   document.getElementById('brightness-veil').style.opacity = cfg.brightness / 100;
@@ -110,6 +140,24 @@ function applyCfg() {
   document.querySelectorAll('[data-viewmode]').forEach(b => b.classList.toggle('active', b.dataset.viewmode === cfg.viewMode));
   document.querySelectorAll('[data-wrap]').forEach(b => b.classList.toggle('active', b.dataset.wrap === cfg.wrap));
   document.querySelectorAll('[data-theme]').forEach(b => b.classList.toggle('active', b.dataset.theme === cfg.theme));
+
+  // 볼륨키 넘김 토글
+  const vkBtn = document.getElementById('volumekey-toggle');
+  if (vkBtn) {
+    vkBtn.textContent = cfg.volumeKey ? '켜짐' : '꺼짐';
+    vkBtn.classList.toggle('active', !!cfg.volumeKey);
+  }
+  if (window.AndroidBridge && window.AndroidBridge.setVolumeKeyEnabled) {
+    try { window.AndroidBridge.setVolumeKeyEnabled(!!cfg.volumeKey); } catch(e) {}
+  }
+
+  // 화면 켜짐 유지 토글
+  const ksBtn = document.getElementById('keepscreen-toggle');
+  if (ksBtn) {
+    ksBtn.textContent = cfg.keepScreen ? '켜짐' : '꺼짐';
+    ksBtn.classList.toggle('active', !!cfg.keepScreen);
+  }
+  syncKeepScreen();
 }
 function setText(id, t) { const el = document.getElementById(id); if (el) el.textContent = t; }
 function saveCfg() { Meta.saveCfg(cfg); }
@@ -481,7 +529,12 @@ function loadContent(id, name, raw) {
   if (hud) { hud.classList.add('show'); updateHUD(); }
   hideUI();
 
-  const CHUNK = 320;
+  if (window.AndroidBridge && window.AndroidBridge.setReaderActive) {
+    try { window.AndroidBridge.setReaderActive(true); } catch(e) {}
+  }
+  syncKeepScreen();
+
+  const CHUNK = 300;
   let idx = 0, restored = false;
   const targetIdx = savedPos && typeof savedPos === 'object' && Number.isInteger(savedPos.pIdx) ? savedPos.pIdx : -1;
 
@@ -508,7 +561,18 @@ function loadContent(id, name, raw) {
     if (token !== renderToken) return;
     const frag = document.createDocumentFragment();
     const end = Math.min(idx + CHUNK, paragraphs.length);
+    let curChunkDiv = null;
+
     for (let i = idx; i < end; i++) {
+      if (i % 50 === 0 || !curChunkDiv) {
+        curChunkDiv = document.createElement('div');
+        curChunkDiv.className = 'para-chunk';
+        if (targetIdx >= 0 && i <= targetIdx + 50 && (i + 50) >= targetIdx) {
+          curChunkDiv.classList.add('restore-layout');
+        }
+        frag.appendChild(curChunkDiv);
+      }
+
       const lines = paragraphs[i].split('\n').map(line => line.trim()).filter(Boolean);
       const p = document.createElement('p');
       p.id = 'p' + i;
@@ -522,7 +586,7 @@ function loadContent(id, name, raw) {
         p.innerHTML = lines.map(escHtml).join('<br>');
       }
       if (targetIdx >= 0 && i <= targetIdx) p.classList.add('restore-layout');
-      frag.appendChild(p);
+      curChunkDiv.appendChild(p);
     }
     disp.appendChild(frag);
     idx = end;
@@ -752,16 +816,34 @@ function updateChapterNav() {
   const index = curChapterIndex();
   const prev = document.getElementById('prev-chapter');
   const next = document.getElementById('next-chapter');
-  if (prev) prev.disabled = !chapters.length || index <= 0;
-  if (next) next.disabled = !chapters.length || index >= chapters.length - 1;
+  if (chapters.length > 0) {
+    if (prev) { prev.disabled = index <= 0; prev.title = '이전 챕터'; }
+    if (next) { next.disabled = index >= chapters.length - 1; next.title = '다음 챕터'; }
+  } else {
+    // 목차가 없는 소설 대상: 5% 단위 퀵 스킵 지원
+    if (prev) { prev.disabled = false; prev.title = '5% 뒤로'; }
+    if (next) { next.disabled = false; next.title = '5% 앞으로'; }
+  }
 }
 function jumpChapter(delta) {
-  if (!chapters.length) return;
-  const current = curChapterIndex();
-  const target = delta < 0
-    ? Math.max(0, current <= 0 ? 0 : current - 1)
-    : Math.min(chapters.length - 1, current < 0 ? 0 : current + 1);
-  jumpTo(chapters[target].pid);
+  if (chapters.length > 0) {
+    const current = curChapterIndex();
+    const target = delta < 0
+      ? Math.max(0, current <= 0 ? 0 : current - 1)
+      : Math.min(chapters.length - 1, current < 0 ? 0 : current + 1);
+    jumpTo(chapters[target].pid);
+  } else {
+    // 목차가 없는 소설 대상 스마트 폴백: 전체 5% 점프
+    const total = document.documentElement.scrollHeight - window.innerHeight;
+    if (total > 0) {
+      const step = total * 0.05;
+      const targetY = delta < 0
+        ? Math.max(0, window.scrollY - step)
+        : Math.min(total, window.scrollY + step);
+      window.scrollTo({ top: targetY, behavior: 'smooth' });
+      toast(delta < 0 ? '5% 뒤로 이동' : '5% 앞으로 이동');
+    }
+  }
 }
 function updateProgress() {
   const total = document.documentElement.scrollHeight - window.innerHeight;
@@ -925,6 +1007,24 @@ function setUIVisibility(visible) {
 function showUI() { setUIVisibility(true); }
 function hideUI() { setUIVisibility(false); }
 
+function turnPage(delta) {
+  if (cfg.viewMode === 'page') {
+    const content = document.getElementById('reader-content');
+    const step = content ? content.clientWidth : window.innerWidth;
+    if (content) content.scrollBy({ left: step * delta, behavior: 'smooth' });
+  } else {
+    const deltaY = window.innerHeight * 0.8;
+    window.scrollBy({ top: deltaY * delta, behavior: 'smooth' });
+  }
+}
+
+window.onVolumeKey = function(direction) {
+  if (!curBook) return;
+  if (!cfg.volumeKey) return;
+  const delta = (direction === 'up') ? -1 : 1;
+  turnPage(delta);
+};
+
 document.addEventListener('click', e => {
   if (!document.getElementById('reader').classList.contains('show')) return;
   if (e.target.closest('#toolbar, #sheet, #overlay, #autoscroll-ind, button, input, a, select')) return;
@@ -940,25 +1040,10 @@ document.addEventListener('click', e => {
   const leftBound = width * 0.25;
   const rightBound = width * 0.80;
 
-  if (cfg.viewMode === 'page') {
-    // 좌우 페이징 모드
-    const content = document.getElementById('reader-content');
-    const step = content ? content.clientWidth : width;
-    if (x < leftBound) {
-      content.scrollBy({ left: -step, behavior: 'smooth' });
-    } else if (x > rightBound) {
-      content.scrollBy({ left: step, behavior: 'smooth' });
-    } else {
-      uiVisible ? hideUI() : showUI();
-    }
-    return;
-  }
-
-  // 세로 스크롤 모드
   if (x < leftBound) {
-    window.scrollBy({ top: -window.innerHeight * 0.75, behavior: 'smooth' });
+    turnPage(-1);
   } else if (x > rightBound) {
-    window.scrollBy({ top: window.innerHeight * 0.75, behavior: 'smooth' });
+    turnPage(1);
   } else {
     uiVisible ? hideUI() : showUI();
   }
@@ -1035,6 +1120,26 @@ document.getElementById('brightness-slider').addEventListener('input', e => {
 });
 document.getElementById('brightness-slider').addEventListener('change', saveCfg);
 
+const vkBtn = document.getElementById('volumekey-toggle');
+if (vkBtn) {
+  vkBtn.addEventListener('click', () => {
+    cfg.volumeKey = !cfg.volumeKey;
+    saveCfg();
+    applyCfg();
+    toast(cfg.volumeKey ? '볼륨키 페이지 넘김 켜짐' : '볼륨키 페이지 넘김 꺼짐');
+  });
+}
+
+const ksBtn = document.getElementById('keepscreen-toggle');
+if (ksBtn) {
+  ksBtn.addEventListener('click', () => {
+    cfg.keepScreen = !cfg.keepScreen;
+    saveCfg();
+    applyCfg();
+    toast(cfg.keepScreen ? '독서 중 화면 켜짐 유지' : '화면 켜짐 유지 해제');
+  });
+}
+
 /* ════════════════════ 서재 백업 및 복원 ════════════════════ */
 function exportLibraryData() {
   try {
@@ -1110,6 +1215,10 @@ document.getElementById('btn-home').addEventListener('click', () => {
   saveNow(); stopAutoScroll(); closeSheet();
   renderToken++;
   curBook = null;
+  if (window.AndroidBridge && window.AndroidBridge.setReaderActive) {
+    try { window.AndroidBridge.setReaderActive(false); } catch(e) {}
+  }
+  syncKeepScreen();
   document.getElementById('reader').classList.remove('show');
   document.getElementById('toolbar').classList.remove('show');
   document.getElementById('status-bar').classList.remove('show');

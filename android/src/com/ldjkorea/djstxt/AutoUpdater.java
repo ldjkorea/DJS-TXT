@@ -26,8 +26,8 @@ import java.net.URL;
 public class AutoUpdater {
     private static final String TAG = "AutoUpdater";
     private static final String VERSION_URL = "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/version.json";
-    public static final int CURRENT_VERSION_CODE = 1;
-    public static final String CURRENT_VERSION_NAME = "1.0.0";
+    public static final int CURRENT_VERSION_CODE = 200;
+    public static final String CURRENT_VERSION_NAME = "2.0.0";
 
     public static void check(final Activity activity, final boolean isManual) {
         if (activity == null || activity.isFinishing()) return;
