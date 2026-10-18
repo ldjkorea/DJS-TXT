@@ -1,11 +1,11 @@
-const CACHE = 'novel-reader-v220';
+const CACHE = 'novel-reader-v220-r1';
 const ASSETS = [
   './index.html',
   './manifest.json',
-  './css/app.css',
-  './js/app.js',
-  './js/data.js',
-  './js/reader.js',
+  './css/app.css?v=220.1',
+  './js/app.js?v=220.1',
+  './js/data.js?v=220.1',
+  './js/reader.js?v=220.1',
   './fonts/RIDIBatang.otf',
   './fonts/PretendardVariable.woff2',
   './icon-192.png',
@@ -15,7 +15,7 @@ const ASSETS = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE)
-      .then(cache => cache.addAll(ASSETS))
+      .then(cache => cache.addAll(ASSETS.map(url=>new Request(url,{cache:'reload'}))))
       .then(() => self.skipWaiting())
   );
 });
