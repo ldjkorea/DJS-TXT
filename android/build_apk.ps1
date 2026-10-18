@@ -1,79 +1,67 @@
-$ErrorActionPreference = "Stop"
-
-$TOOLS = "C:\Users\c\Documents\Codex\2026-09-14\tools"
-$ANDROID_JAR = "$TOOLS\android-sdk\platforms\android-34\android.jar"
-$BUILD_TOOLS = "$TOOLS\android-sdk\build-tools\35.0.0"
-$JDK_BIN = "$TOOLS\jdk\jdk-21.0.12.1+1\bin"
-
-$AAPT2 = "$BUILD_TOOLS\aapt2.exe"
-$D8 = "$BUILD_TOOLS\d8.bat"
-$ZIPALIGN = "$BUILD_TOOLS\zipalign.exe"
-$APKSIGNER = "$BUILD_TOOLS\apksigner.bat"
-$JAVAC = "$JDK_BIN\javac.exe"
-$JAR = "$JDK_BIN\jar.exe"
-$KEYTOOL = "$JDK_BIN\keytool.exe"
-
-$BASE_DIR = "C:\Users\c\.gemini\antigravity\scratch\txtreader\android"
-Set-Location $BASE_DIR
-
-$BUILD_DIR = "$BASE_DIR\build"
-if (Test-Path $BUILD_DIR) { Remove-Item -Recurse -Force $BUILD_DIR }
-New-Item -ItemType Directory -Path "$BUILD_DIR\gen" | Out-Null
-New-Item -ItemType Directory -Path "$BUILD_DIR\classes" | Out-Null
-New-Item -ItemType Directory -Path "$BUILD_DIR\dex" | Out-Null
-
-Write-Host "==> 0. Syncing web assets into android/assets..."
-$WEB_ROOT = "C:\Users\c\.gemini\antigravity\scratch\txtreader"
-Copy-Item -Force "$WEB_ROOT\index.html" "$BASE_DIR\assets\index.html"
-Copy-Item -Force "$WEB_ROOT\manifest.json" "$BASE_DIR\assets\manifest.json"
-Copy-Item -Force "$WEB_ROOT\sw.js" "$BASE_DIR\assets\sw.js"
-Copy-Item -Force -Recurse "$WEB_ROOT\css" "$BASE_DIR\assets\"
-Copy-Item -Force -Recurse "$WEB_ROOT\js" "$BASE_DIR\assets\"
-
-Write-Host "==> 1. Compiling resources with aapt2..."
-& $AAPT2 compile --dir "$BASE_DIR\res" -o "$BUILD_DIR\compiled_res.zip"
-
-Write-Host "==> 2. Linking APK and generating R.java..."
-& $AAPT2 link -I $ANDROID_JAR --manifest "$BASE_DIR\AndroidManifest.xml" -o "$BUILD_DIR\unaligned.apk" -A "$BASE_DIR\assets" "$BUILD_DIR\compiled_res.zip" --java "$BUILD_DIR\gen" --auto-add-overlay
-
-Write-Host "==> 3. Compiling Java sources with javac (Java 8 compatibility)..."
-$javaFiles = Get-ChildItem -Path "$BASE_DIR\src", "$BUILD_DIR\gen" -Recurse -Filter "*.java" | Select-Object -ExpandProperty FullName
-& $JAVAC -encoding UTF-8 -source 8 -target 8 -cp $ANDROID_JAR -d "$BUILD_DIR\classes" $javaFiles
-if ($LASTEXITCODE -ne 0) { throw "javac compilation failed" }
-
-Write-Host "==> 4. Converting bytecode to DEX with d8..."
-$classFiles = Get-ChildItem -Path "$BUILD_DIR\classes" -Recurse -Filter "*.class" | Select-Object -ExpandProperty FullName
-& $D8 --min-api 24 --output "$BUILD_DIR\dex" --lib $ANDROID_JAR $classFiles
-if ($LASTEXITCODE -ne 0) { throw "d8 DEX conversion failed" }
-
-$dexFile = "$BUILD_DIR\dex\classes.dex"
-if (-not (Test-Path $dexFile)) { throw "classes.dex was not generated!" }
-Write-Host "classes.dex generated successfully: $((Get-Item $dexFile).Length) bytes"
-
-Write-Host "==> 5. Adding classes.dex to APK..."
-& $JAR uf "$BUILD_DIR\unaligned.apk" -C "$BUILD_DIR\dex" classes.dex
-if ($LASTEXITCODE -ne 0) { throw "jar update failed" }
-
-Write-Host "==> 6. Aligning APK with zipalign..."
-& $ZIPALIGN -f -p 4 "$BUILD_DIR\unaligned.apk" "$BUILD_DIR\aligned.apk"
-
-Write-Host "==> 7. Ensuring release keystore..."
-$KEYSTORE = "$BASE_DIR\release.keystore"
-if (-not (Test-Path $KEYSTORE)) {
-    & $KEYTOOL -genkeypair -v -keystore $KEYSTORE -alias djstxt -keyalg RSA -keysize 2048 -validity 10000 -storepass djstxtpass -keypass djstxtpass -dname "CN=ldjkorea, OU=DJS, O=DJS, L=Seoul, ST=Seoul, C=KR"
+param(
+    [Parameter(Mandatory=$true)][string]$SdkRoot,
+    [string]$JdkHome = $env:JAVA_HOME,
+    [string]$OutputDirectory,
+    [switch]$Unsigned,
+    [switch]$TestDebuggable
+)
+$ErrorActionPreference='Stop'
+$baseDir=$PSScriptRoot
+$webRoot=Split-Path -Parent $baseDir
+if(-not $JdkHome) { $JdkHome=Split-Path -Parent (Split-Path -Parent (Get-Command javac -ErrorAction Stop).Source) }
+$androidJar=Join-Path $SdkRoot 'platforms\android-34\android.jar'
+$buildTools=Join-Path $SdkRoot 'build-tools\35.0.0'
+foreach($required in @($androidJar,"$JdkHome\bin\javac.exe","$buildTools\aapt2.exe","$buildTools\d8.bat","$buildTools\zipalign.exe","$buildTools\apksigner.bat")) {
+    if(-not (Test-Path -LiteralPath $required)) { throw "필수 도구를 찾을 수 없습니다: $required" }
 }
-
-Write-Host "==> 8. Signing APK with apksigner..."
-$OUTPUT_APK = "$BASE_DIR\DJS_TXT_v2.1.0.apk"
-if (Test-Path $OUTPUT_APK) { Remove-Item -Force $OUTPUT_APK }
-& $APKSIGNER sign --ks $KEYSTORE --ks-pass pass:djstxtpass --key-pass pass:djstxtpass --out $OUTPUT_APK "$BUILD_DIR\aligned.apk"
-
-Write-Host "==> 9. Verifying signed APK..."
-& $APKSIGNER verify -v $OUTPUT_APK
-
-Copy-Item -Force $OUTPUT_APK "$WEB_ROOT\DJS_TXT_v2.1.0.apk"
-
-$apkItem = Get-Item $OUTPUT_APK
-Write-Host "==> BUILD SUCCESS!"
-Write-Host "APK Path: $($apkItem.FullName)"
-Write-Host "Size: $($apkItem.Length) bytes ($([Math]::Round($apkItem.Length / 1KB, 1)) KB)"
+if(-not $OutputDirectory) { $OutputDirectory=Join-Path $baseDir ('.qa\builds\'+(Get-Date -Format 'yyyyMMdd-HHmmss-fff')) }
+if(Test-Path -LiteralPath $OutputDirectory) { throw "기존 출력 폴더는 덮어쓰지 않습니다: $OutputDirectory" }
+$buildDir=[IO.Path]::GetFullPath($OutputDirectory)
+New-Item -ItemType Directory -Path "$buildDir\gen","$buildDir\classes","$buildDir\dex","$buildDir\assets" | Out-Null
+function Invoke-Checked([string]$Program,[object[]]$Arguments) {
+    & $Program @Arguments
+    if($LASTEXITCODE -ne 0) { throw "도구 실행 실패(exit $LASTEXITCODE): $Program" }
+}
+foreach($asset in @('index.html','manifest.json','sw.js','icon-192.png','icon-512.png','css','js','fonts')) {
+    Copy-Item -LiteralPath (Join-Path $webRoot $asset) -Destination "$buildDir\assets" -Recurse
+}
+$manifest=Get-Content -LiteralPath "$baseDir\AndroidManifest.xml" -Raw -Encoding UTF8
+if($TestDebuggable) { $manifest=$manifest.Replace('<application','<application android:debuggable="true"') }
+[IO.File]::WriteAllText("$buildDir\AndroidManifest.xml",$manifest,[Text.UTF8Encoding]::new($false))
+[xml]$xml=$manifest
+$version=$xml.manifest.GetAttribute('versionName','http://schemas.android.com/apk/res/android')
+Invoke-Checked "$buildTools\aapt2.exe" @('compile','--dir',"$baseDir\res",'-o',"$buildDir\compiled_res.zip")
+Invoke-Checked "$buildTools\aapt2.exe" @('link','-I',$androidJar,'--manifest',"$buildDir\AndroidManifest.xml",'-o',"$buildDir\unsigned.apk",'-A',"$buildDir\assets","$buildDir\compiled_res.zip",'--java',"$buildDir\gen",'--auto-add-overlay')
+$sources=@(Get-ChildItem -LiteralPath "$baseDir\src","$buildDir\gen" -Recurse -Filter '*.java' | Select-Object -ExpandProperty FullName)
+Invoke-Checked "$JdkHome\bin\javac.exe" (@('-encoding','UTF-8','-source','8','-target','8','-cp',$androidJar,'-d',"$buildDir\classes")+$sources)
+$classes=@(Get-ChildItem -LiteralPath "$buildDir\classes" -Recurse -Filter '*.class' | Select-Object -ExpandProperty FullName)
+Invoke-Checked "$buildTools\d8.bat" (@('--min-api','24','--output',"$buildDir\dex",'--lib',$androidJar)+$classes)
+Invoke-Checked "$JdkHome\bin\jar.exe" @('uf',"$buildDir\unsigned.apk",'-C',"$buildDir\dex",'classes.dex')
+# Some Windows aapt2/JAR combinations emit backslashes in asset entry names.
+# Android treats those as literal filenames, so normalize before alignment/signing.
+$inputZip=[IO.Compression.ZipFile]::OpenRead("$buildDir\unsigned.apk")
+$outputZip=[IO.Compression.ZipFile]::Open("$buildDir\normalized.apk",[IO.Compression.ZipArchiveMode]::Create)
+try {
+    foreach($entry in $inputZip.Entries) {
+        $name=$entry.FullName.Replace('\','/')
+        $level=if($name -eq 'resources.arsc' -or $entry.CompressedLength -eq $entry.Length){[IO.Compression.CompressionLevel]::NoCompression}else{[IO.Compression.CompressionLevel]::Optimal}
+        $newEntry=$outputZip.CreateEntry($name,$level)
+        $source=$entry.Open();$destination=$newEntry.Open()
+        try{$source.CopyTo($destination)}finally{$source.Dispose();$destination.Dispose()}
+    }
+}finally{$inputZip.Dispose();$outputZip.Dispose()}
+Invoke-Checked "$buildTools\zipalign.exe" @('-p','4',"$buildDir\normalized.apk","$buildDir\aligned.apk")
+if($Unsigned) { Write-Output "UNSIGNED_APK=$buildDir\aligned.apk"; exit 0 }
+$keystore=Join-Path $baseDir 'release.keystore'
+if(-not (Test-Path -LiteralPath $keystore)) { throw '기존 서명키가 없습니다. 새 키를 자동 생성하지 않습니다.' }
+if(-not $env:DJS_TXT_STORE_PASSWORD) { throw 'DJS_TXT_STORE_PASSWORD 환경 변수에 기존 서명키 비밀번호를 지정하세요.' }
+if(-not $env:DJS_TXT_KEY_PASSWORD) { $env:DJS_TXT_KEY_PASSWORD=$env:DJS_TXT_STORE_PASSWORD }
+$suffix=if($TestDebuggable){'-qa'}else{''}
+$apk=Join-Path $buildDir "DJS_TXT_v$version$suffix.apk"
+Invoke-Checked "$buildTools\apksigner.bat" @('sign','--ks',$keystore,'--ks-pass','env:DJS_TXT_STORE_PASSWORD','--key-pass','env:DJS_TXT_KEY_PASSWORD','--out',$apk,"$buildDir\aligned.apk")
+$certOutput=& "$buildTools\apksigner.bat" verify --print-certs $apk
+if($LASTEXITCODE -ne 0) {throw 'APK 서명 검증 실패'}
+$expected='484e8813318127829d507b8d1e5e62ab89077d05af3904de2795b1b8382e419f'
+if(-not ($certOutput -match "Signer #1 certificate SHA-256 digest: $expected")) {throw '기존 APK와 서명 인증서가 다릅니다'}
+Write-Output "APK_PATH=$apk"
+Write-Output ('APK_SHA256='+(Get-FileHash -LiteralPath $apk -Algorithm SHA256).Hash.ToLowerInvariant())

@@ -1,0 +1,10 @@
+RIDIBatang
+Copyright (c) RIDI Corporation. All Rights Reserved.
+Original unmodified font: https://ridicorp.com/ridibatang/
+Download: https://ridicorp.com/wp-content/themes/ridicorp/css/font/RIDIBatang.otf
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+The complete license is included in OFL.txt in this directory.
+
+리디바탕의 저작권은 리디주식회사가 소유하고 있습니다.
+이 소프트웨어는 리디주식회사에서 제공한 리디바탕 글꼴을 포함합니다.

@@ -41,21 +41,43 @@ const DB = (() => {
       tx.onerror = e => reject(e.target.error);
     });
   }
-  return { put, get, del };
+  async function restore(contents, commit, rollback) {
+    const d = await open();
+    return new Promise((resolve,reject) => {
+      const tx=d.transaction('books','readwrite');
+      tx.oncomplete=resolve;
+      tx.onerror=()=>reject(tx.error||new Error('본문 저장 실패'));
+      tx.onabort=()=>{rollback?.();reject(tx.error||new Error('본문 복원을 취소했습니다'));};
+      let remaining=Object.keys(contents).length;
+      const finish=()=>{try{commit();}catch(e){tx.abort();reject(e);}};
+      if(!remaining){finish();return;}
+      for(const [id,content] of Object.entries(contents)) {
+        const req=tx.objectStore('books').put({id,content});
+        req.onsuccess=()=>{if(--remaining===0)finish();};
+      }
+    });
+  }
+  return { put, get, del, restore };
 })();
 
 /* ════════════════════ 메타데이터 (localStorage) ════════════════════ */
 const Meta = {
-  books() { try { return JSON.parse(localStorage.getItem('nr-books') || '{}'); } catch(e) { return {}; } },
+  books() { try { const value=JSON.parse(localStorage.getItem('nr-books') || '{}');return value&&typeof value==='object'&&!Array.isArray(value)?value:{}; } catch(e) { return {}; } },
   saveBooks(b) { try { localStorage.setItem('nr-books', JSON.stringify(b)); return true; } catch(e) { return false; } },
   cfg() {
-    const def = { font: 19, line: 1.9, pad: 22, gap: 0.7, fontFamily: 'ridi', weight: 400, theme: 'graphite', brightness: 0, asSpeed: 3, wrap: 'keep-all', indent: 0, viewMode: 'scroll', volumeKey: true, volumeKeyInvert: false, keepScreen: true };
-    try { return Object.assign(def, JSON.parse(localStorage.getItem('nr-cfg') || '{}')); } catch(e) { return def; }
+    try { return ReaderData.config(JSON.parse(localStorage.getItem('nr-cfg') || '{}')); } catch(e) { return ReaderData.config(); }
   },
-  saveCfg(c) { try { localStorage.setItem('nr-cfg', JSON.stringify(c)); } catch(e) {} },
+  saveCfg(c) { try { localStorage.setItem('nr-cfg', JSON.stringify(c));return true; } catch(e) { return false; } },
   lastBook() { try { return localStorage.getItem('nr-last') || null; } catch(e) { return null; } },
   setLast(id) { try { id ? localStorage.setItem('nr-last', id) : localStorage.removeItem('nr-last'); } catch(e) {} }
 };
+
+let libraryMutation=Promise.resolve();
+function serializeLibrary(action){const operation=libraryMutation.then(action);libraryMutation=operation.catch(()=>{});return operation;}
+function importFiles(files){return serializeLibrary(()=>doImportFiles(files));}
+function importExternalTxt(name,content){return serializeLibrary(()=>doImportExternalTxt(name,content));}
+function restoreLibraryData(data,options){return serializeLibrary(()=>doRestoreLibraryData(data,options));}
+function librarySnapshot(){return serializeLibrary(doLibrarySnapshot);}
 
 /* ════════════════════ 상태 ════════════════════ */
 let cfg = Meta.cfg();
@@ -71,6 +93,7 @@ let importingFiles = false;
 let lastStorageWarning = 0;
 let progressDragging = false;
 let wakeLockSentinel = null;
+let wakeLockRequest = null;
 
 function topOffset() {
   const content = document.getElementById('reader-content');
@@ -85,15 +108,19 @@ async function syncKeepScreen() {
     try { window.AndroidBridge.setKeepScreenOn(shouldKeep); } catch(e) {}
   }
   if ('wakeLock' in navigator) {
+    if(wakeLockRequest)return;
     try {
-      if (shouldKeep && !wakeLockSentinel) {
-        wakeLockSentinel = await navigator.wakeLock.request('screen');
-        wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; });
+      if (shouldKeep && !wakeLockSentinel && !wakeLockRequest) {
+        wakeLockRequest=navigator.wakeLock.request('screen');
+        const lock=await wakeLockRequest;
+        if(!cfg.keepScreen||!curBook||document.hidden){await lock.release();return;}
+        wakeLockSentinel=lock;
+        lock.addEventListener('release', () => { if(wakeLockSentinel===lock)wakeLockSentinel=null; });
       } else if (!shouldKeep && wakeLockSentinel) {
         await wakeLockSentinel.release();
         wakeLockSentinel = null;
       }
-    } catch(e) {}
+    } catch(e) {} finally {wakeLockRequest=null;}
   }
 }
 
@@ -165,10 +192,10 @@ function applyCfg() {
   syncKeepScreen();
 }
 function setText(id, t) { const el = document.getElementById(id); if (el) el.textContent = t; }
-function saveCfg() { Meta.saveCfg(cfg); }
+function saveCfg() { const saved=Meta.saveCfg(cfg);if(!saved)toast('설정을 저장하지 못했어요. 저장 공간을 확인해 주세요.');return saved; }
 
 /* ════════════════════ 유틸 ════════════════════ */
-function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function escReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function fileId(name, size) { return 'b_' + name.replace(/[^a-zA-Z0-9가-힣]/g, '_') + '_' + size; }
 function normalizedText(text) { return String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n'); }
@@ -190,9 +217,9 @@ function splitIntoParagraphs(raw) {
   }
   return blankBlocks;
 }
-async function fingerprintContent(content) {
+async function fingerprintContent(content, {legacyFallback=false}={}) {
   const normalized = normalizedText(content);
-  if (globalThis.crypto && crypto.subtle && globalThis.TextEncoder) {
+  if (!legacyFallback && globalThis.crypto && crypto.subtle && globalThis.TextEncoder) {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalized));
     return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
   }
@@ -231,7 +258,7 @@ const CH_RE = /^\s*(?:(?:제\s*)?\d+\s*[장화권부편회막절](?=[\s:.·\-—
 function isChapter(line) {
   const t = line.trim();
   if (!t || t.length > 55) return false;
-  return CH_RE.test(t);
+  return CH_RE.test(t) || /^\d{1,5}\.(?:\s+.{1,45})?$/.test(t);
 }
 
 /* ════════════════════ 서재 렌더 ════════════════════ */
@@ -290,8 +317,8 @@ function renderLibrary() {
     const chapter = book.chapter ? escHtml(book.chapter) : '읽은 기록 없음';
     const recent = book.lastRead ? timeAgo(book.lastRead) : (book.importedAt ? '추가 ' + timeAgo(book.importedAt) : '아직 읽지 않음');
     const progress = Math.max(0, Math.min(100, Number(book.progress) || 0));
-    return '<div class="book-row" data-id="' + id + '">' +
-      '<button class="book-row-main" type="button" data-open-book="' + id + '">' +
+    return '<div class="book-row" data-id="' + escHtml(id) + '">' +
+      '<button class="book-row-main" type="button" data-open-book="' + escHtml(id) + '">' +
         '<span class="book-row-title">' + title + '</span>' +
         '<span class="book-row-sub"><span class="book-row-chapter">' + chapter + '</span><span class="book-row-dot">·</span><span>' + escHtml(recent) + '</span></span>' +
         '<span class="book-row-bar"><span class="book-row-fill" style="width:' + progress + '%"></span></span>' +
@@ -341,6 +368,7 @@ async function deleteBook(id) {
   if (!confirm('"' + name + '"을(를) 서재에서 삭제할까요? 저장된 본문과 독서 기록도 삭제됩니다.')) return;
   delete books[id];
   if (!Meta.saveBooks(books)) { toast('서재 정보를 저장하지 못했어요'); return; }
+  window.AndroidBridge?.acceptLegacyLibrary?.();
   if (Meta.lastBook() === id) Meta.setLast(null);
   try { await DB.del(id); } catch(e) {}
   renderLibrary();
@@ -411,7 +439,7 @@ async function findDuplicateBook(books, fingerprint, size, content) {
   }
   for (const id of Object.keys(books)) {
     const book = books[id];
-    if (!book || book.fingerprint || Number(book.size) !== Number(size)) continue;
+    if (!book || (book.fingerprint && !book.fingerprint.startsWith('fallback-'))) continue;
     try {
       const stored = await DB.get(id);
       if (stored != null && normalizedText(stored) === normalizedText(content)) {
@@ -424,7 +452,7 @@ async function findDuplicateBook(books, fingerprint, size, content) {
   return null;
 }
 
-async function importFiles(files) {
+async function doImportFiles(files) {
   if (importingFiles || !files.length) return;
   importingFiles = true;
   let added = 0, duplicates = 0, failed = 0;
@@ -436,6 +464,7 @@ async function importFiles(files) {
         if (!/\.txt$/i.test(file.name) && !(file.type || '').toLowerCase().startsWith('text/plain')) {
           throw new Error('txt');
         }
+        if(file.size>50*1024*1024)throw new Error('50MB를 초과한 파일입니다');
         const content = await readFileAsText(file);
         const fingerprint = await fingerprintContent(content);
         const books = Meta.books();
@@ -500,114 +529,39 @@ async function openBook(id) {
       if (confirm('저장된 본문이 없어요. TXT 파일을 다시 가져올까요?')) fileInput.click();
       return;
     }
-    loadContent(id, book.name || book.fileName || '제목 없음', content);
+    await loadContent(id, book.name || book.fileName || '제목 없음', content);
   } catch(e) {
     hideLoading();
     toast('책을 불러오지 못했어요');
   }
 }
 
-function loadContent(id, name, raw) {
-  const token = ++renderToken;
-  curBook = { id, name };
-  Meta.setLast(id);
-  const bookRecords = Meta.books();
-  if (bookRecords[id]) {
-    bookRecords[id].lastRead = Date.now();
-    Meta.saveBooks(bookRecords);
-  }
-  setText('book-title', name.replace(/\.txt$/i, ''));
-
-  paragraphs = splitIntoParagraphs(raw);
-  chapters = [];
-  pendingRestore = null;
-  const savedPos = (Meta.books()[id] || {}).pos || null;
-  const disp = document.getElementById('text-display');
-  disp.innerHTML = '';
-  window.scrollTo(0, 0);
-
-  document.getElementById('library').style.display = 'none';
+let readerLayout = new ReaderLayout(document.getElementById('reader-content'),document.getElementById('text-display'),()=>{
+  if(!curBook)return;
+  updateProgress();clearTimeout(scrollSaveTimer);scrollSaveTimer=setTimeout(saveScrollPos,350);
+});
+async function loadContent(id,name,raw) {
+  saveNow();stopAutoScroll();clearTimeout(scrollSaveTimer);renderToken++;
+  curBook={id,name};Meta.setLast(id);
+  const records=Meta.books(),savedPos=records[id]?.pos||null;
+  if(records[id]){records[id].lastRead=Date.now();Meta.saveBooks(records);}
+  setText('book-title',name.replace(/\.txt$/i,''));
+  paragraphs=splitIntoParagraphs(raw);
+  chapters=[];
+  paragraphs.forEach((text,i)=>{const lines=text.split('\n').map(l=>l.trim()).filter(Boolean);if(lines.length===1&&isChapter(lines[0]))chapters.push({pid:'p'+i,idx:i,title:lines[0]});});
+  document.getElementById('library').style.display='none';
   document.getElementById('reader').classList.add('show');
   document.getElementById('toolbar').classList.add('show');
   document.getElementById('status-bar').classList.add('show');
-  const hud = document.getElementById('reader-hud');
-  if (hud) { hud.classList.add('show'); updateHUD(); }
-  hideUI();
-
-  if (window.AndroidBridge && window.AndroidBridge.setReaderActive) {
-    try { window.AndroidBridge.setReaderActive(true); } catch(e) {}
-  }
-  syncKeepScreen();
-
-  const CHUNK = 300;
-  let idx = 0, restored = false;
-  const targetIdx = savedPos && typeof savedPos === 'object' && Number.isInteger(savedPos.pIdx) ? savedPos.pIdx : -1;
-
-  function restoreWhenReady(allDone) {
-    if (restored) return;
-    if (savedPos != null && !allDone) {
-      if (typeof savedPos === 'number' || targetIdx < 0 || targetIdx >= idx) return;
-    }
-    restored = true;
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (token !== renderToken) return;
-      restorePosition(savedPos);
-      updateProgress();
-      hideLoading();
-      const releaseRestoreLayout = () => {
-        document.querySelectorAll('#text-display .restore-layout').forEach(el => el.classList.remove('restore-layout'));
-      };
-      if ('requestIdleCallback' in window) requestIdleCallback(releaseRestoreLayout, { timeout: 900 });
-      else setTimeout(releaseRestoreLayout, 120);
-    }));
-  }
-
-  function chunk() {
-    if (token !== renderToken) return;
-    const frag = document.createDocumentFragment();
-    const end = Math.min(idx + CHUNK, paragraphs.length);
-    let curChunkDiv = null;
-
-    for (let i = idx; i < end; i++) {
-      if (i % 50 === 0 || !curChunkDiv) {
-        curChunkDiv = document.createElement('div');
-        curChunkDiv.className = 'para-chunk';
-        if (targetIdx >= 0 && i <= targetIdx + 50 && (i + 50) >= targetIdx) {
-          curChunkDiv.classList.add('restore-layout');
-        }
-        frag.appendChild(curChunkDiv);
-      }
-
-      const lines = paragraphs[i].split('\n').map(line => line.trim()).filter(Boolean);
-      const p = document.createElement('p');
-      p.id = 'p' + i;
-      if (!lines.length) {
-        p.className = 'blank';
-      } else if (lines.length === 1 && isChapter(lines[0])) {
-        p.className = 'chapter';
-        p.textContent = lines[0];
-        chapters.push({ pid: 'p' + i, title: lines[0] });
-      } else {
-        p.innerHTML = lines.map(escHtml).join('<br>');
-      }
-      if (targetIdx >= 0 && i <= targetIdx) p.classList.add('restore-layout');
-      curChunkDiv.appendChild(p);
-    }
-    disp.appendChild(frag);
-    idx = end;
-    restoreWhenReady(false);
-
-    if (idx < paragraphs.length) {
-      requestAnimationFrame(chunk);
-    } else {
-      restoreWhenReady(true);
-      buildTOC();
-      updateProgress();
-    }
-  }
-  requestAnimationFrame(chunk);
-  closeSheet();
-  switchTab('settings');
+  document.getElementById('reader-hud').classList.add('show');
+  closeSheet();switchTab('settings');
+  uiVisible=false;
+  document.getElementById('toolbar').classList.add('hide');
+  document.getElementById('status-bar').classList.add('hide');
+  document.getElementById('reader-hud').classList.remove('hide');
+  document.getElementById('reader-content').classList.remove('ui-visible');
+  if(window.AndroidBridge?.setReaderActive)window.AndroidBridge.setReaderActive(true);
+  await readerLayout.load(paragraphs,savedPos);buildTOC();updateHUD();syncKeepScreen();hideLoading();
 }
 
 function buildTOC() {
@@ -625,8 +579,8 @@ function buildTOC() {
   });
 }
 function jumpTo(pid) {
-  const el = document.getElementById(pid);
-  if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  const index=Number(String(pid).replace(/^p/,''));
+  if(Number.isInteger(index)) readerLayout.goTo({pIdx:index,charOffset:0});
 }
 
 /* ════════════════════ 북마크 ════════════════════ */
@@ -640,7 +594,7 @@ function toggleBookmark() {
   const pos = capturePosition();
   const pct = pos.pct;
   const preview = previewAtScroll();
-  b.bookmarks.unshift({ pos: { pIdx: pos.pIdx, offset: pos.offset, ratio: pos.ratio, progress: pos.pct, chapter: pos.chapter }, pct, text: preview, time: Date.now() });
+  b.bookmarks.unshift({ pos: { pIdx: pos.pIdx, charOffset: pos.charOffset, windowStart:pos.windowStart, offset: pos.offset, ratio: pos.ratio, progress: pos.pct, chapter: pos.chapter }, pct, text: preview, time: Date.now() });
   if (b.bookmarks.length > 50) b.bookmarks.pop();
   Meta.saveBooks(books);
   renderBookmarks();
@@ -683,7 +637,8 @@ function renderBookmarks() {
       e.stopPropagation();
       const books = Meta.books(); const bk = books[curBook.id];
       bk.bookmarks.splice(+btn.dataset.bmdel, 1);
-      Meta.saveBooks(books); renderBookmarks();
+      if(Meta.saveBooks(books))window.AndroidBridge?.acceptLegacyLibrary?.();
+      renderBookmarks();
     });
   });
 }
@@ -711,7 +666,7 @@ function doSearch() {
     }
     re.lastIndex = 0;
   }
-  cnt.textContent = results.length ? `${results.length}개 발견` : '결과 없음';
+  cnt.textContent = results.length ? `${results.length}개 발견${results.length===200?' (최대 200개 표시)':''}` : '결과 없음';
   box.innerHTML = results.map(r => {
     const hl = escHtml(r.snippet).replace(new RegExp(escReg(escHtml(q)), 'gi'), m => `<mark>${m}</mark>`);
     return `<div class="search-result" data-pid="${r.pid}"><div class="sr-text">${hl}</div></div>`;
@@ -719,8 +674,7 @@ function doSearch() {
   box.querySelectorAll('.search-result').forEach(el => {
     el.addEventListener('click', () => {
       const pid = el.dataset.pid;
-      highlightHit(pid);
-      jumpTo(pid); closeSheet();
+      jumpTo(pid);highlightHit(pid);closeSheet();
     });
   });
 }
@@ -735,110 +689,20 @@ function highlightHit(pid) {
 function clearSearchHits() { searchHitEls.forEach(el => el.classList.remove('search-hit')); searchHitEls = []; }
 
 /* 단락 기준 위치 저장과 복원: 2계층 이진 탐색 (청크 -> 단락) */
-function paragraphAtAnchor(anchor) {
-  const chunks = document.getElementById('text-display').children;
-  if (!chunks.length) return null;
-
-  // 1단계: 청크 컨테이너 이진 탐색
-  let cLow = 0, cHigh = chunks.length - 1, targetChunk = chunks[chunks.length - 1];
-  while (cLow <= cHigh) {
-    const mid = (cLow + cHigh) >> 1;
-    const rect = chunks[mid].getBoundingClientRect();
-    const top = rect.top + window.scrollY;
-    if (top + Math.max(1, rect.height) > anchor) {
-      targetChunk = chunks[mid];
-      cHigh = mid - 1;
-    } else {
-      cLow = mid + 1;
-    }
-  }
-  if (!targetChunk) return null;
-
-  // 청크가 아닌 일반 단락인 경우(폴백)
-  if (!targetChunk.classList.contains('para-chunk')) {
-    return targetChunk;
-  }
-
-  // 2단계: 청크 내부의 단락(<p>) 이진 탐색
-  const pNodes = targetChunk.children;
-  if (!pNodes.length) return null;
-  let pLow = 0, pHigh = pNodes.length - 1, answer = pNodes[pNodes.length - 1];
-  while (pLow <= pHigh) {
-    const mid = (pLow + pHigh) >> 1;
-    const rect = pNodes[mid].getBoundingClientRect();
-    const top = rect.top + window.scrollY;
-    if (top + Math.max(1, rect.height) > anchor) {
-      answer = pNodes[mid];
-      pHigh = mid - 1;
-    } else {
-      pLow = mid + 1;
-    }
-  }
-  return answer || null;
-}
-
+function paragraphAtAnchor() { return document.getElementById('p'+readerLayout.capture().pIdx); }
 function capturePosition() {
-  const anchor = window.scrollY + topOffset();
-  const paragraph = paragraphAtAnchor(anchor);
-  if (!paragraph) return { pIdx: 0, offset: 0, ratio: 0, pct: curPct(), chapter: curChapterTitle() };
-  const rect = paragraph.getBoundingClientRect();
-  const top = rect.top + window.scrollY;
-  const height = Math.max(1, rect.height);
-  const offset = Math.max(0, Math.min(height, anchor - top));
-  const index = Number.parseInt(paragraph.id.slice(1), 10);
-  return {
-    pIdx: Number.isFinite(index) ? index : 0,
-    offset: Math.round(offset),
-    ratio: Math.max(0, Math.min(1, offset / height)),
-    pct: curPct(),
-    chapter: curChapterTitle()
-  };
+  const pos=readerLayout.capture();return {...pos,pct:Math.round(readerLayout.percent(pos)*10)/10,chapter:curChapterTitle(pos.pIdx)};
 }
-
-function restorePosition(pos) {
-  if (pos == null) { window.scrollTo(0, 0); return; }
-  if (typeof pos === 'number') { window.scrollTo(0, pos); return; }
-  const index = Number.isInteger(pos.pIdx) ? pos.pIdx : -1;
-  const paragraph = index >= 0 ? document.getElementById('p' + index) : null;
-  if (!paragraph) {
-    const total = document.documentElement.scrollHeight - window.innerHeight;
-    const progress = Number.isFinite(pos.progress) ? pos.progress : 0;
-    window.scrollTo(0, Math.max(0, total * Math.max(0, Math.min(100, progress)) / 100));
-    return;
-  }
-  const rect = paragraph.getBoundingClientRect();
-  const top = rect.top + window.scrollY;
-  const height = Math.max(1, rect.height);
-  const offset = Number.isFinite(pos.ratio)
-    ? Math.max(0, Math.min(1, pos.ratio)) * height
-    : Math.max(0, Math.min(height, Number(pos.offset) || 0));
-  window.scrollTo(0, Math.max(0, top + offset - topOffset()));
-}
-
-function curPct() {
-  const total = document.documentElement.scrollHeight - window.innerHeight;
-  return total > 0 ? Math.max(0, Math.min(100, Math.round(window.scrollY / total * 100))) : 0;
-}
-function curChapterIndex() {
-  if (!chapters.length) return -1;
-  const y = window.scrollY + topOffset();
-  let low = 0, high = chapters.length - 1, current = -1;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    const chapter = chapters[mid];
-    const el = document.getElementById(chapter.pid);
-    if (!el) { low = mid + 1; continue; }
-    if (el.getBoundingClientRect().top + window.scrollY <= y) {
-      current = mid;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
+function restorePosition(pos) { readerLayout.goTo(pos); }
+function curPct() { return Math.round(readerLayout.percent()*10)/10; }
+function curChapterIndex(index=readerLayout.lastPosition.pIdx) {
+  let low=0,high=chapters.length-1,current=-1;
+  while(low<=high){const mid=(low+high)>>1;if(chapters[mid].idx<=index){current=mid;low=mid+1;}else high=mid-1;}
   return current;
 }
-function curChapterTitle() {
-  const index = curChapterIndex();
+
+function curChapterTitle(pIdx) {
+  const index = curChapterIndex(pIdx);
   return index >= 0 ? chapters[index].title : '';
 }
 function updateChapterNav() {
@@ -862,21 +726,12 @@ function jumpChapter(delta) {
       : Math.min(chapters.length - 1, current < 0 ? 0 : current + 1);
     jumpTo(chapters[target].pid);
   } else {
-    // 목차가 없는 소설 대상 스마트 폴백: 전체 5% 점프
-    const total = document.documentElement.scrollHeight - window.innerHeight;
-    if (total > 0) {
-      const step = total * 0.05;
-      const targetY = delta < 0
-        ? Math.max(0, window.scrollY - step)
-        : Math.min(total, window.scrollY + step);
-      window.scrollTo({ top: targetY, behavior: 'smooth' });
-      toast(delta < 0 ? '5% 뒤로 이동' : '5% 앞으로 이동');
-    }
+    readerLayout.progress(curPct()+delta*5);
+    toast(delta<0?'5% 뒤로 이동':'5% 앞으로 이동');
   }
 }
 function updateProgress() {
-  const total = document.documentElement.scrollHeight - window.innerHeight;
-  const ratio = total > 0 ? Math.max(0, Math.min(1, window.scrollY / total)) : 0;
+  const ratio = readerLayout.percent()/100;
   const pct = ratio * 100;
   document.getElementById('progress-bar').style.transform = 'scaleX(' + ratio + ')';
   const slider = document.getElementById('reader-progress-slider');
@@ -887,13 +742,15 @@ function updateProgress() {
   updateChapterNav();
 }
 function saveScrollPos() {
-  if (!curBook) return;
+  if (!curBook || readerLayout.busy) return;
   const books = Meta.books();
   const book = books[curBook.id];
   if (!book) return;
   const position = capturePosition();
   book.pos = {
     pIdx: position.pIdx,
+    charOffset: position.charOffset,
+    windowStart: position.windowStart,
     offset: position.offset,
     ratio: position.ratio,
     progress: position.pct,
@@ -926,8 +783,7 @@ if (progressSlider) {
   });
   progressSlider.addEventListener('change', e => {
     const pct = Math.max(0, Math.min(100, Number(e.target.value) || 0));
-    const total = document.documentElement.scrollHeight - window.innerHeight;
-    window.scrollTo({ top: Math.max(0, total * pct / 100), behavior: 'auto' });
+    readerLayout.progress(pct);
     progressDragging = false;
     updateProgress();
     saveScrollPos();
@@ -945,6 +801,7 @@ function saveNow() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { saveNow(); stopAutoScroll(); }
+  syncKeepScreen();
 });
 window.addEventListener('pagehide', saveNow);
 window.addEventListener('beforeunload', saveNow);
@@ -952,11 +809,10 @@ window.addEventListener('blur', saveNow);
 
 /* Keep the visible sentence anchored when reader layout changes. */
 function updateCfgKeepingPlace(change) {
-  const position = curBook ? capturePosition() : null;
-  change();
-  applyCfg();
-  saveCfg();
-  if (position) requestAnimationFrame(() => requestAnimationFrame(() => restorePosition(position)));
+  const position=curBook?capturePosition():null;
+  if(position)readerLayout.busy=true;
+  change();applyCfg();saveCfg();
+  if(position)readerLayout.reflow(position);
 }
 
 /* ════════════════════ 자동 스크롤 ════════════════════ */
@@ -966,12 +822,13 @@ function startAutoScroll() {
   document.getElementById('autoscroll-ind').classList.add('show');
   setText('autoscroll-toggle', '중지');
   document.getElementById('autoscroll-toggle').classList.add('active');
-  let acc = 0;
+  let acc = 0, lastTurn=0;
   function step() {
     if (!autoScrolling) return;
+    if(cfg.viewMode==='page'){if(!lastTurn||performance.now()-lastTurn>Math.max(800,6000/cfg.asSpeed)){turnPage(1);lastTurn=performance.now();}autoScrollRAF=requestAnimationFrame(step);return;}
     acc += cfg.asSpeed * 0.45;
     if (acc >= 1) { window.scrollBy(0, acc); acc = 0; }
-    if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) { stopAutoScroll(); return; }
+    if (readerLayout.percent() >= 99.99) { stopAutoScroll(); return; }
     autoScrollRAF = requestAnimationFrame(step);
   }
   autoScrollRAF = requestAnimationFrame(step);
@@ -1047,20 +904,11 @@ function setUIVisibility(visible) {
 function showUI() { setUIVisibility(true); }
 function hideUI() { setUIVisibility(false); }
 
-function turnPage(delta) {
-  if (cfg.viewMode === 'page') {
-    const content = document.getElementById('reader-content');
-    const step = content ? content.clientWidth : window.innerWidth;
-    if (content) content.scrollBy({ left: step * delta, behavior: 'smooth' });
-  } else {
-    const deltaY = window.innerHeight * 0.8;
-    window.scrollBy({ top: deltaY * delta, behavior: 'smooth' });
-  }
-}
+function turnPage(delta) { readerLayout.turn(delta); }
 
 window.onVolumeKey = function(direction) {
   if (!curBook) return;
-  if (!cfg.volumeKey) return;
+  if (!cfg.volumeKey || sheetOpen) return;
   let delta = (direction === 'up') ? -1 : 1;
   if (cfg.volumeKeyInvert) delta = -delta;
   turnPage(delta);
@@ -1093,15 +941,23 @@ document.addEventListener('click', e => {
 /* ════════════════════ 시트 ════════════════════ */
 function openSheet() {
   sheetOpen = true;
+  document.getElementById('sheet').inert=false;
+  document.getElementById('sheet').setAttribute('aria-hidden','false');
+  if(window.AndroidBridge?.setReaderActive)window.AndroidBridge.setReaderActive(false);
   document.getElementById('sheet').classList.add('open');
   document.getElementById('overlay').classList.add('show');
-  showUI();
+  if(curBook)showUI();
+  document.querySelector('.sheet-tab.active')?.focus();
 }
 function closeSheet() {
   sheetOpen = false;
+  document.getElementById('sheet').inert=true;
+  document.getElementById('sheet').setAttribute('aria-hidden','true');
+  if(window.AndroidBridge?.setReaderActive)window.AndroidBridge.setReaderActive(!!curBook);
   document.getElementById('sheet').classList.remove('open');
   document.getElementById('overlay').classList.remove('show');
   searchInput.blur();
+  document.getElementById(curBook?'btn-menu':'library-settings').focus({preventScroll:true});
 }
 function switchTab(name) {
   document.querySelectorAll('.sheet-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
@@ -1110,6 +966,8 @@ function switchTab(name) {
   if (name === 'bookmarks') renderBookmarks();
   if (name === 'search') setTimeout(() => searchInput.focus(), 250);
 }
+document.getElementById('library-settings').addEventListener('click',()=>{openSheet();switchTab('settings');});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&sheetOpen)closeSheet();if(e.key==='Tab'&&sheetOpen){const focusable=Array.from(document.querySelectorAll('#sheet button,#sheet input')).filter(el=>el.getClientRects().length);const first=focusable[0],last=focusable[focusable.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}});
 document.getElementById('btn-menu').addEventListener('click', e => { e.stopPropagation(); openSheet(); switchTab('settings'); });
 document.getElementById('overlay').addEventListener('click', closeSheet);
 document.querySelectorAll('.sheet-tab').forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
@@ -1158,7 +1016,7 @@ document.querySelectorAll('.step-btn').forEach(btn => {
   btn.addEventListener('pointerup', stopRepeat);
   btn.addEventListener('pointercancel', stopRepeat);
   btn.addEventListener('pointerleave', stopRepeat);
-  btn.addEventListener('click', e => { e.preventDefault(); });
+  btn.addEventListener('click', e => { if(e.detail===0)executeStepAction(btn.dataset.act); });
 });
 document.querySelectorAll('[data-font]').forEach(button => button.addEventListener('click', () => {
   updateCfgKeepingPlace(() => { cfg.fontFamily = button.dataset.font; });
@@ -1215,61 +1073,81 @@ if (ksBtn) {
 }
 
 /* ════════════════════ 서재 백업 및 복원 ════════════════════ */
-function exportLibraryData() {
-  try {
-    const data = {
-      version: 2,
-      exportedAt: Date.now(),
-      books: Meta.books(),
-      cfg: Meta.cfg(),
-      lastBook: Meta.lastBook()
-    };
-    const jsonStr = JSON.stringify(data, null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const d = new Date();
-    const dateStr = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-    a.href = url;
-    a.download = 'txtreader_backup_' + dateStr + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast('서재 데이터가 저장되었어요');
-  } catch(e) {
-    toast('백업 파일을 생성하지 못했어요');
+async function doLibrarySnapshot() {
+  saveNow();
+  const books=Meta.books(),contents=Object.create(null);
+  for(const id of Object.keys(books)) {
+    const content=await DB.get(id);
+    if(content==null)throw new Error('본문이 없는 책을 먼저 다시 가져와 주세요: '+(books[id].name||id));
+    contents[id]=content;
   }
+  return {version:3,exportedAt:Date.now(),books,contents,cfg:Meta.cfg(),lastBook:Meta.lastBook()};
 }
-
-function importLibraryData(file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      const data = JSON.parse(e.target.result);
-      if (!data || typeof data !== 'object' || !data.books) {
-        throw new Error('형식 불일치');
-      }
-      const curBooks = Meta.books();
-      Object.assign(curBooks, data.books);
-      Meta.saveBooks(curBooks);
-      if (data.cfg) {
-        cfg = Object.assign(cfg, data.cfg);
-        Meta.saveCfg(cfg);
-        applyCfg();
-      }
-      if (data.lastBook && curBooks[data.lastBook]) {
-        Meta.setLast(data.lastBook);
-      }
-      renderLibrary();
-      toast('서재 데이터가 성공적으로 복원되었어요');
-    } catch(err) {
-      toast('백업 파일을 복원하지 못했어요: ' + (err.message || '오류'));
+async function exportLibraryData() {
+  try {
+    const jsonStr=JSON.stringify(await librarySnapshot());
+    const date=new Date(),stamp=[date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');
+    const filename='DJS_TXT_backup_'+stamp+'.json';
+    if(window.AndroidBridge?.saveBackup) {
+      window.AndroidBridge.saveBackup(filename,jsonStr);
+      toast('저장할 위치를 선택해 주세요');return;
     }
-  };
-  reader.readAsText(file);
+    const url=URL.createObjectURL(new Blob([jsonStr],{type:'application/json'}));
+    const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    toast('책 본문과 독서 기록을 백업했어요');
+  } catch(e) {toast('백업 실패: '+e.message);}
 }
+let restoringBackup=false;
+async function doRestoreLibraryData(input,{migration=false}={}) {
+  if(restoringBackup)throw new Error('다른 복원이 진행 중입니다');
+  if(curBook)document.getElementById('btn-home').click();
+  restoringBackup=true;
+  const keys=['nr-books','nr-cfg','nr-last'],before=keys.map(k=>localStorage.getItem(k));
+  let committed=false;
+  try {
+    const data=ReaderData.backup(input),current=Meta.books(),merged={...current},writes=Object.create(null);
+    for(const [id,record] of Object.entries(data.books)) {
+      const existing=await DB.get(id),content=data.contents[id];
+      if(typeof content==='string') {
+        if(existing!=null&&normalizedText(existing)!==normalizedText(content))throw new Error('기존 책과 다른 본문이 같은 ID를 사용합니다: '+record.name);
+        if(record.fingerprint&&record.fingerprint!==await fingerprintContent(content,{legacyFallback:record.fingerprint.startsWith('fallback-')}))throw new Error('본문 무결성 검사 실패: '+record.name);
+        if(existing==null)writes[id]=content;
+      }
+      merged[id]=ReaderData.mergeBook(current[id],record);
+    }
+    const rollback=()=>{keys.forEach((key,i)=>{try{if(before[i]===null)localStorage.removeItem(key);else localStorage.setItem(key,before[i]);}catch(e){}});};
+    await DB.restore(writes,()=>{
+      try {
+        if(!Meta.saveBooks(merged))throw new Error('서재 정보를 저장할 공간이 부족합니다');
+        if(data.cfg&&(!migration||!localStorage.getItem('nr-cfg')))localStorage.setItem('nr-cfg',JSON.stringify(data.cfg));
+        if(data.lastBook&&merged[data.lastBook]&&(!migration||!Meta.lastBook()))localStorage.setItem('nr-last',data.lastBook);
+        committed=true;
+      } catch(e){rollback();throw e;}
+    },rollback);
+    cfg=Meta.cfg();applyCfg();renderLibrary();
+    return {books:Object.keys(data.books).length,legacy:data.version===2};
+  } finally {restoringBackup=false;if(committed)saveCfg();}
+}
+async function importLibraryData(file) {
+  if(!file)return;
+  try {
+    if(file.size>200*1024*1024)throw new Error('백업 파일이 200MB를 초과합니다');
+    const result=await restoreLibraryData(JSON.parse(await file.text()));
+    toast(result.legacy?'구형 독서 기록을 복원했어요. 본문이 없는 책은 TXT를 다시 가져와 주세요.':'책 본문과 독서 기록을 복원했어요');
+  }catch(e){toast('복원 실패: '+e.message);}
+}
+window.onNativeBackupSaved=ok=>toast(ok?'책 본문과 독서 기록을 백업했어요':'백업 저장을 취소했어요');
+window.restoreLibraryData=restoreLibraryData;
+window.librarySnapshot=librarySnapshot;
+window.hasLegacyRecords=async expected=>{
+  const books=Meta.books();
+  for(const [id,record] of Object.entries(expected)){
+    if(!books[id]||await DB.get(id)==null)return false;
+    if(ReaderData.mergeBook(books[id],record).bookmarks.length!==(books[id].bookmarks||[]).length)return false;
+  }
+  return true;
+};
 
 const btnExport = document.getElementById('btn-export-data');
 if (btnExport) btnExport.addEventListener('click', exportLibraryData);
@@ -1289,6 +1167,7 @@ document.getElementById('btn-home').addEventListener('click', () => {
   saveNow(); stopAutoScroll(); closeSheet();
   renderToken++;
   curBook = null;
+  readerLayout.stop();
   if (window.AndroidBridge && window.AndroidBridge.setReaderActive) {
     try { window.AndroidBridge.setReaderActive(false); } catch(e) {}
   }
@@ -1320,7 +1199,7 @@ async function requestPersistentStorage() {
     if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
   } catch(e) {}
 }
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !window.AndroidBridge) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js')
       .then(registration => registration.update())
@@ -1334,7 +1213,7 @@ applyCfg();
 renderLibrary();
 
 /* ════════════════════ 외부 파일 수신 브릿지 (APK & PWA Launch) ════════════════════ */
-async function importExternalTxt(fileName, content) {
+async function doImportExternalTxt(fileName, content) {
   if (!content) return;
   try {
     const cleanName = (fileName || '가져온 텍스트').trim();
@@ -1347,14 +1226,14 @@ async function importExternalTxt(fileName, content) {
       if (!books[targetId]) {
         const now = Date.now();
         books[targetId] = {
-          name: cleanName, fileName: cleanName, size: content.length, fingerprint,
+          name: cleanName, fileName: cleanName, size: new TextEncoder().encode(content).length, fingerprint,
           importedAt: now, lastRead: now, pos: { pIdx: 0, offset: 0, ratio: 0 },
           progress: 0, chapter: '', bookmarks: []
         };
         await DB.put(targetId, content);
-        Meta.saveBooks(books);
+        if(!Meta.saveBooks(books))throw new Error('서재 정보를 저장하지 못했습니다');
       }
-    }
+    } else if(await DB.get(targetId)==null){await DB.put(targetId,content);}
     hideLoading();
     openBook(targetId);
   } catch (err) {
@@ -1365,12 +1244,13 @@ async function importExternalTxt(fileName, content) {
 window.importExternalTxt = importExternalTxt;
 
 // PWA File Handling API
-if ('launchQueue' in window && 'files' in LaunchParams.prototype) {
+if ('launchQueue' in window && typeof LaunchParams!=='undefined' && 'files' in LaunchParams.prototype) {
   launchQueue.setConsumer(async (launchParams) => {
     if (!launchParams.files || !launchParams.files.length) return;
     for (const handle of launchParams.files) {
       try {
         const file = await handle.getFile();
+        if(file.size>50*1024*1024)throw new Error('50MB를 초과한 파일입니다');
         const content = await readFileAsText(file);
         await importExternalTxt(file.name, content);
         break;
@@ -1398,19 +1278,31 @@ try {
 } catch(e) {}
 
 /* ════════════════════ 안드로이드 네이티브 파일 수신 브릿지 ════════════════════ */
-function checkNativePendingFile() {
+let receivingNativeFiles=false;
+async function checkNativePendingFile() {
+  if(importingFiles||restoringBackup||receivingNativeFiles)return;
+  receivingNativeFiles=true;
   try {
-    if (window.AndroidBridge && typeof window.AndroidBridge.hasPendingFile === 'function' && window.AndroidBridge.hasPendingFile()) {
-      const title = window.AndroidBridge.pullPendingTitle();
-      const content = window.AndroidBridge.pullPendingContent();
-      if (content) {
-        importExternalTxt(title, content);
+    if(window.AndroidBridge?.pullPendingFile) {
+      let entry;
+      while((entry=window.AndroidBridge.pullPendingFile())) {
+        const file=JSON.parse(entry);
+        if(file.kind==='backup') await restoreLibraryData(JSON.parse(file.content));
+        else await importExternalTxt(file.title,file.content);
       }
     }
-  } catch(e) {}
+  } catch(e){toast('파일 수신 실패: '+e.message);}
+  finally{receivingNativeFiles=false;}
 }
-window.onNativeFileReady = checkNativePendingFile;
+window.onNativeFileReady=checkNativePendingFile;
 checkNativePendingFile();
-
-
-
+if(window.AndroidBridge?.finishLegacyMigration)window.AndroidBridge.finishLegacyMigration();
+async function receiveSharedFiles() {
+  const url=new URL(location.href),id=url.searchParams.get('shared');if(!id)return;
+  try {
+    const cache=await caches.open('djs-txt-shared'),response=await cache.match('./shared/'+id);
+    if(response){const entries=await response.json();for(const item of entries){const bytes=Uint8Array.from(atob(item.bytes),c=>c.charCodeAt(0));await importExternalTxt(item.name,await readFileAsText(new Blob([bytes])));}await cache.delete('./shared/'+id);}
+    url.searchParams.delete('shared');history.replaceState(null,'',url);
+  }catch(e){toast('공유 파일 가져오기 실패: '+e.message);}
+}
+receiveSharedFiles();

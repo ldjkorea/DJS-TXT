@@ -25,7 +25,8 @@ public class ApkFileProvider extends ContentProvider {
         String filename = uri.getLastPathSegment();
         if (filename == null) throw new FileNotFoundException("Empty filename");
 
-        File file = new File(getContext().getExternalFilesDir(null), filename);
+        if(!"DJS_TXT_update.apk".equals(filename)||!"r".equals(mode))throw new FileNotFoundException("Unsupported file");
+        File file = new File(new File(getContext().getFilesDir(),"updates"), filename);
         if (file.exists()) {
             return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
         }
@@ -41,7 +42,8 @@ public class ApkFileProvider extends ContentProvider {
     public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
         if (getContext() == null) return null;
         String filename = uri.getLastPathSegment();
-        File file = new File(getContext().getExternalFilesDir(null), filename != null ? filename : "");
+        if(!"DJS_TXT_update.apk".equals(filename))return null;
+        File file = new File(new File(getContext().getFilesDir(),"updates"),filename);
         MatrixCursor cursor = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
         if (file.exists()) {
             cursor.addRow(new Object[]{file.getName(), file.length()});

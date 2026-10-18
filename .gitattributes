@@ -1,0 +1,3 @@
+# Preserve the upstream license verbatim, including its trailing space.
+fonts/Pretendard-LICENSE.txt whitespace=-blank-at-eol
+android/assets/fonts/Pretendard-LICENSE.txt whitespace=-blank-at-eol
