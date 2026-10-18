@@ -732,6 +732,14 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+[data-theme="night"] #reader-hud {
+  color: #726c62;
+  opacity: 0.48;
+}
+[data-theme="graphite"] #reader-hud {
+  color: #838a9a;
+  opacity: 0.60;
+}
 
 /* ════════ 좌우 페이징(Page-turn) 모드 ════════ */
 #reader.mode-page {

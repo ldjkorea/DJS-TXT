@@ -49,7 +49,7 @@ const Meta = {
   books() { try { return JSON.parse(localStorage.getItem('nr-books') || '{}'); } catch(e) { return {}; } },
   saveBooks(b) { try { localStorage.setItem('nr-books', JSON.stringify(b)); return true; } catch(e) { return false; } },
   cfg() {
-    const def = { font: 19, line: 1.9, pad: 22, gap: 0.7, fontFamily: 'ridi', weight: 400, theme: 'graphite', brightness: 0, asSpeed: 3, wrap: 'keep-all', indent: 0, viewMode: 'scroll', volumeKey: true, keepScreen: true };
+    const def = { font: 19, line: 1.9, pad: 22, gap: 0.7, fontFamily: 'ridi', weight: 400, theme: 'graphite', brightness: 0, asSpeed: 3, wrap: 'keep-all', indent: 0, viewMode: 'scroll', volumeKey: true, volumeKeyInvert: false, keepScreen: true };
     try { return Object.assign(def, JSON.parse(localStorage.getItem('nr-cfg') || '{}')); } catch(e) { return def; }
   },
   saveCfg(c) { try { localStorage.setItem('nr-cfg', JSON.stringify(c)); } catch(e) {} },
@@ -146,6 +146,11 @@ function applyCfg() {
   if (vkBtn) {
     vkBtn.textContent = cfg.volumeKey ? '켜짐' : '꺼짐';
     vkBtn.classList.toggle('active', !!cfg.volumeKey);
+  }
+  const vkDirBtn = document.getElementById('volumekey-dir-toggle');
+  if (vkDirBtn) {
+    vkDirBtn.textContent = cfg.volumeKeyInvert ? '상:다음 / 하:이전 (반전)' : '상:이전 / 하:다음 (기본)';
+    vkDirBtn.classList.toggle('active', !!cfg.volumeKeyInvert);
   }
   if (window.AndroidBridge && window.AndroidBridge.setVolumeKeyEnabled) {
     try { window.AndroidBridge.setVolumeKeyEnabled(!!cfg.volumeKey); } catch(e) {}
@@ -729,23 +734,47 @@ function highlightHit(pid) {
 }
 function clearSearchHits() { searchHitEls.forEach(el => el.classList.remove('search-hit')); searchHitEls = []; }
 
-/* 단락 기준 위치 저장과 복원 */
+/* 단락 기준 위치 저장과 복원: 2계층 이진 탐색 (청크 -> 단락) */
 function paragraphAtAnchor(anchor) {
-  const nodes = document.getElementById('text-display').children;
-  if (!nodes.length) return null;
-  let low = 0, high = nodes.length - 1, answer = nodes.length - 1;
-  while (low <= high) {
-    const mid = (low + high) >> 1;
-    const rect = nodes[mid].getBoundingClientRect();
+  const chunks = document.getElementById('text-display').children;
+  if (!chunks.length) return null;
+
+  // 1단계: 청크 컨테이너 이진 탐색
+  let cLow = 0, cHigh = chunks.length - 1, targetChunk = chunks[chunks.length - 1];
+  while (cLow <= cHigh) {
+    const mid = (cLow + cHigh) >> 1;
+    const rect = chunks[mid].getBoundingClientRect();
     const top = rect.top + window.scrollY;
     if (top + Math.max(1, rect.height) > anchor) {
-      answer = mid;
-      high = mid - 1;
+      targetChunk = chunks[mid];
+      cHigh = mid - 1;
     } else {
-      low = mid + 1;
+      cLow = mid + 1;
     }
   }
-  return nodes[answer] || null;
+  if (!targetChunk) return null;
+
+  // 청크가 아닌 일반 단락인 경우(폴백)
+  if (!targetChunk.classList.contains('para-chunk')) {
+    return targetChunk;
+  }
+
+  // 2단계: 청크 내부의 단락(<p>) 이진 탐색
+  const pNodes = targetChunk.children;
+  if (!pNodes.length) return null;
+  let pLow = 0, pHigh = pNodes.length - 1, answer = pNodes[pNodes.length - 1];
+  while (pLow <= pHigh) {
+    const mid = (pLow + pHigh) >> 1;
+    const rect = pNodes[mid].getBoundingClientRect();
+    const top = rect.top + window.scrollY;
+    if (top + Math.max(1, rect.height) > anchor) {
+      answer = pNodes[mid];
+      pHigh = mid - 1;
+    } else {
+      pLow = mid + 1;
+    }
+  }
+  return answer || null;
 }
 
 function capturePosition() {
@@ -977,7 +1006,18 @@ function updateHUD() {
   const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
   setText('hud-time', timeStr);
   setText('hud-title', (curBook.name || '').replace(/\.txt$/i, ''));
-  setText('hud-battery', hudBatteryLevel != null ? hudBatteryLevel + '%' : '');
+
+  let batteryText = '';
+  if (window.AndroidBridge && typeof window.AndroidBridge.getBatteryLevel === 'function') {
+    try {
+      const nativeLevel = window.AndroidBridge.getBatteryLevel();
+      if (nativeLevel >= 0) batteryText = nativeLevel + '%';
+    } catch(e) {}
+  }
+  if (!batteryText && hudBatteryLevel != null) {
+    batteryText = hudBatteryLevel + '%';
+  }
+  setText('hud-battery', batteryText);
 }
 setInterval(updateHUD, 15000);
 
@@ -1021,7 +1061,8 @@ function turnPage(delta) {
 window.onVolumeKey = function(direction) {
   if (!curBook) return;
   if (!cfg.volumeKey) return;
-  const delta = (direction === 'up') ? -1 : 1;
+  let delta = (direction === 'up') ? -1 : 1;
+  if (cfg.volumeKeyInvert) delta = -delta;
   turnPage(delta);
 };
 
@@ -1080,21 +1121,44 @@ document.querySelectorAll('[data-reader-tab]').forEach(button => {
   });
 });
 
-/* 설정 컨트롤 */
-document.querySelectorAll('.step-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const action = btn.dataset.act;
-    updateCfgKeepingPlace(() => {
-      if (action === 'font+') cfg.font = Math.min(40, cfg.font + 1);
-      else if (action === 'font-') cfg.font = Math.max(8, cfg.font - 1);
-      else if (action === 'line+') cfg.line = Math.min(3.5, Math.round((cfg.line + 0.1) * 10) / 10);
-      else if (action === 'line-') cfg.line = Math.max(1.2, Math.round((cfg.line - 0.1) * 10) / 10);
-      else if (action === 'pad+') cfg.pad = Math.min(80, cfg.pad + 4);
-      else if (action === 'pad-') cfg.pad = Math.max(0, cfg.pad - 4);
-      else if (action === 'gap+') cfg.gap = Math.min(2.5, Math.round((cfg.gap + 0.1) * 10) / 10);
-      else if (action === 'gap-') cfg.gap = Math.max(0, Math.round((cfg.gap - 0.1) * 10) / 10);
-    });
+/* 설정 컨트롤 (단일 탭 및 롱프레스 연속 조절) */
+function executeStepAction(action) {
+  updateCfgKeepingPlace(() => {
+    if (action === 'font+') cfg.font = Math.min(40, cfg.font + 1);
+    else if (action === 'font-') cfg.font = Math.max(8, cfg.font - 1);
+    else if (action === 'line+') cfg.line = Math.min(3.5, Math.round((cfg.line + 0.1) * 10) / 10);
+    else if (action === 'line-') cfg.line = Math.max(1.2, Math.round((cfg.line - 0.1) * 10) / 10);
+    else if (action === 'pad+') cfg.pad = Math.min(80, cfg.pad + 4);
+    else if (action === 'pad-') cfg.pad = Math.max(0, cfg.pad - 4);
+    else if (action === 'gap+') cfg.gap = Math.min(2.5, Math.round((cfg.gap + 0.1) * 10) / 10);
+    else if (action === 'gap-') cfg.gap = Math.max(0, Math.round((cfg.gap - 0.1) * 10) / 10);
   });
+}
+
+document.querySelectorAll('.step-btn').forEach(btn => {
+  let stepTimer = null, stepInterval = null;
+  const stopRepeat = () => {
+    clearTimeout(stepTimer);
+    clearInterval(stepInterval);
+    stepTimer = null;
+    stepInterval = null;
+  };
+
+  btn.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    executeStepAction(btn.dataset.act);
+    stopRepeat();
+    stepTimer = setTimeout(() => {
+      stepInterval = setInterval(() => {
+        executeStepAction(btn.dataset.act);
+      }, 110);
+    }, 380);
+  });
+
+  btn.addEventListener('pointerup', stopRepeat);
+  btn.addEventListener('pointercancel', stopRepeat);
+  btn.addEventListener('pointerleave', stopRepeat);
+  btn.addEventListener('click', e => { e.preventDefault(); });
 });
 document.querySelectorAll('[data-font]').forEach(button => button.addEventListener('click', () => {
   updateCfgKeepingPlace(() => { cfg.fontFamily = button.dataset.font; });
@@ -1127,6 +1191,16 @@ if (vkBtn) {
     saveCfg();
     applyCfg();
     toast(cfg.volumeKey ? '볼륨키 페이지 넘김 켜짐' : '볼륨키 페이지 넘김 꺼짐');
+  });
+}
+
+const vkDirBtn = document.getElementById('volumekey-dir-toggle');
+if (vkDirBtn) {
+  vkDirBtn.addEventListener('click', () => {
+    cfg.volumeKeyInvert = !cfg.volumeKeyInvert;
+    saveCfg();
+    applyCfg();
+    toast(cfg.volumeKeyInvert ? '볼륨키 방향: 상(다음) / 하(이전)' : '볼륨키 방향: 상(이전) / 하(다음)');
   });
 }
 

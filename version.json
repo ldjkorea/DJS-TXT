@@ -1,7 +1,7 @@
 {
-  "versionCode": 200,
-  "versionName": "2.0.0",
+  "versionCode": 210,
+  "versionName": "2.1.0",
   "appName": "DJS TXT",
-  "releaseNotes": "v2.0.0 대규모 업데이트: 하드웨어 볼륨키 페이지 넘김, 리디바탕(RIDIBatang) 서체 탑재, 독서 중 화면 켜짐 유지, 대용량 가상 렌더링 최적화, 챕터 퀵 점프 및 비목차 5% 스마트 폴백 탑재.",
-  "apkUrl": "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/DJS_TXT_v2.0.0.apk"
+  "releaseNotes": "v2.1.0 고도화: 독서 위치 저장 이진 탐색 엔진 2계층 최적화, 물리 볼륨키 스로틀링 및 방향 반전 옵션, 설정 스텝 버튼 롱프레스 연속 조절, 네이티브 배터리 잔량 HUD 실시간 연동, 야간 다크 테마 저자극 튜닝.",
+  "apkUrl": "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/DJS_TXT_v2.1.0.apk"
 }

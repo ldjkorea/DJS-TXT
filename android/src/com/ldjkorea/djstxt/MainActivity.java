@@ -8,6 +8,7 @@ import android.graphics.Color;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.OpenableColumns;
@@ -49,6 +50,7 @@ public class MainActivity extends Activity {
     private WebView mWebView;
     private boolean mPageLoaded = false;
     private final AndroidBridge mBridge = new AndroidBridge();
+    private long mLastVolumeEventTime = 0;
 
     public class AndroidBridge {
         private String mPendingTitle = null;
@@ -115,6 +117,20 @@ public class MainActivity extends Activity {
                     }
                 }
             });
+        }
+
+        @JavascriptInterface
+        public int getBatteryLevel() {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    BatteryManager bm = (BatteryManager) getSystemService(Context.BATTERY_SERVICE);
+                    if (bm != null) {
+                        int level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY);
+                        if (level >= 0 && level <= 100) return level;
+                    }
+                }
+            } catch (Exception ignored) {}
+            return -1;
         }
 
         @JavascriptInterface
@@ -413,15 +429,19 @@ public class MainActivity extends Activity {
         if (mBridge.isReaderActive() && mBridge.isVolumeKeyEnabled()) {
             if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
                 if (action == KeyEvent.ACTION_DOWN) {
-                    final String dir = (keyCode == KeyEvent.KEYCODE_VOLUME_UP) ? "up" : "down";
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (mWebView != null) {
-                                mWebView.evaluateJavascript("if (window.onVolumeKey) { window.onVolumeKey('" + dir + "'); }", null);
+                    long now = System.currentTimeMillis();
+                    if (now - mLastVolumeEventTime >= 160) {
+                        mLastVolumeEventTime = now;
+                        final String dir = (keyCode == KeyEvent.KEYCODE_VOLUME_UP) ? "up" : "down";
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (mWebView != null) {
+                                    mWebView.evaluateJavascript("if (window.onVolumeKey) { window.onVolumeKey('" + dir + "'); }", null);
+                                }
                             }
-                        }
-                    });
+                        });
+                    }
                 }
                 return true; // 시스템 볼륨 HUD 표시 차단
             }
@@ -436,8 +456,8 @@ public class MainActivity extends Activity {
             mWebView.evaluateJavascript(
                     "(function() {" +
                     "  var sheet = document.getElementById('sheet');" +
-                    "  if (sheet && sheet.classList.contains('show')) {" +
-                    "    var btnClose = document.getElementById('sheet-close'); if (btnClose) btnClose.click();" +
+                    "  if (sheet && (sheet.classList.contains('open') || sheet.classList.contains('show'))) {" +
+                    "    var overlay = document.getElementById('overlay'); if (overlay) overlay.click();" +
                     "    return 'consumed';" +
                     "  }" +
                     "  var reader = document.getElementById('reader');" +

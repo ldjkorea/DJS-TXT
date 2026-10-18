@@ -64,14 +64,14 @@ if (-not (Test-Path $KEYSTORE)) {
 }
 
 Write-Host "==> 8. Signing APK with apksigner..."
-$OUTPUT_APK = "$BASE_DIR\DJS_TXT_v2.0.0.apk"
+$OUTPUT_APK = "$BASE_DIR\DJS_TXT_v2.1.0.apk"
 if (Test-Path $OUTPUT_APK) { Remove-Item -Force $OUTPUT_APK }
 & $APKSIGNER sign --ks $KEYSTORE --ks-pass pass:djstxtpass --key-pass pass:djstxtpass --out $OUTPUT_APK "$BUILD_DIR\aligned.apk"
 
 Write-Host "==> 9. Verifying signed APK..."
 & $APKSIGNER verify -v $OUTPUT_APK
 
-Copy-Item -Force $OUTPUT_APK "$WEB_ROOT\DJS_TXT_v2.0.0.apk"
+Copy-Item -Force $OUTPUT_APK "$WEB_ROOT\DJS_TXT_v2.1.0.apk"
 
 $apkItem = Get-Item $OUTPUT_APK
 Write-Host "==> BUILD SUCCESS!"
