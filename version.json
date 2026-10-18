@@ -1,7 +1,8 @@
 {
-  "versionCode": 210,
-  "versionName": "2.1.0",
+  "versionCode": 220,
+  "versionName": "2.2.0",
   "appName": "DJS TXT",
-  "releaseNotes": "v2.1.0 고도화: 독서 위치 저장 이진 탐색 엔진 2계층 최적화, 물리 볼륨키 스로틀링 및 방향 반전 옵션, 설정 스텝 버튼 롱프레스 연속 조절, 네이티브 배터리 잔량 HUD 실시간 연동, 야간 다크 테마 저자극 튜닝.",
-  "apkUrl": "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/DJS_TXT_v2.1.0.apk"
+  "releaseNotes": "본문 포함 백업·복원, 구형 책·위치·북마크 보존, 긴 TXT의 제한 렌더링, 세로·가로 앵커 통합, Android 파일 선택·백업 저장 및 오프라인 서재 통합.",
+  "apkUrl": "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/DJS_TXT_v2.2.0.apk",
+  "sha256": "59622e783145daefe34427a0ac5d85280978168a63815ac28cef1b574a8e23dc"
 }
