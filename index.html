@@ -11,12 +11,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="apple-touch-icon" href="./icon-192.png">
 <title>DJS TXT</title>
-<!-- Pretendard, RIDIBatang & Noto Serif KR fonts -->
-<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
-<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/sun-typeface/ridibatang@master/RIDIBatang.css" />
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preload" href="./fonts/RIDIBatang.otf" as="font" type="font/otf" crossorigin>
 <link rel="stylesheet" href="./css/app.css">
 </head>
 <body>
@@ -58,6 +53,7 @@
       <button class="add-btn" id="add-btn-top">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> 가져오기
       </button>
+      <button class="add-btn" id="library-settings" aria-label="서재 설정 및 백업">설정·백업</button>
     </div>
     <div class="lib-sub">광고 없이, 온전히 읽기에 집중하는 공간</div>
   </div>
@@ -129,7 +125,7 @@
 
 <!-- 시트 -->
 <div id="overlay"></div>
-<div id="sheet">
+<div id="sheet" role="dialog" aria-label="독서 설정 및 서재 백업" aria-modal="true" aria-hidden="true" inert>
   <div class="sheet-handle"></div>
   <div class="sheet-tabs">
     <button class="sheet-tab active" data-tab="settings">
@@ -261,7 +257,7 @@
       <div class="set-block-title">앱 정보 & 자동 업데이트</div>
       <div class="set-row">
         <span class="set-label">현재 버전</span>
-        <span id="app-version-display" style="font-size:13px; color:var(--text-sub); font-variant-numeric:tabular-nums;">v2.1.0</span>
+        <span id="app-version-display" style="font-size:13px; color:var(--text-sub); font-variant-numeric:tabular-nums;">v2.2.0</span>
       </div>
       <div class="set-row" style="margin-top:8px">
         <span class="set-label">최신 확인</span>
@@ -292,6 +288,8 @@
 <div id="loading"><div class="spinner"></div><span id="loading-msg">불러오는 중...</span></div>
 <div id="toast"></div>
 
+<script defer src="./js/data.js"></script>
+<script defer src="./js/reader.js"></script>
 <script defer src="./js/app.js"></script>
 </body>
 </html>

@@ -206,12 +206,9 @@ button { font-family: var(--ui-font); cursor: pointer; color: inherit; }
   font-size: var(--font-size); line-height: var(--line-height); letter-spacing: var(--letter-spacing);
   font-weight: var(--font-weight);
   word-break: keep-all; overflow-wrap: break-word; margin-bottom: var(--para-gap); text-indent: 1em;
-  content-visibility: auto; contain-intrinsic-size: auto 3em;
   transition: background 0.3s;
 }
 .para-chunk {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 800px;
 }
 .para-chunk.restore-layout { content-visibility: visible; }
 #text-display p.restore-layout { content-visibility: visible; }
@@ -741,24 +738,15 @@ body {
   opacity: 0.60;
 }
 
-/* ════════ 좌우 페이징(Page-turn) 모드 ════════ */
-#reader.mode-page {
-  overflow: hidden !important;
-  touch-action: pan-y;
-}
-#reader.mode-page #reader-content {
-  height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-  padding-top: calc(env(safe-area-inset-top) + 26px);
-  padding-bottom: calc(env(safe-area-inset-bottom) + 26px);
-  padding-left: var(--side-pad);
-  padding-right: var(--side-pad);
-  overflow: hidden;
-}
-#reader.mode-page #text-display {
-  display: block;
-  column-width: calc(100vw - var(--side-pad) * 2);
-  column-gap: calc(var(--side-pad) * 2);
-  column-fill: auto;
-  height: 100%;
-  transition: transform 0.22s cubic-bezier(0.2, 0, 0.1, 1);
-}
+/* Fixed column geometry; paragraphs remain measurable in both modes. */
+@font-face {font-family:RIDIBatang;src:url('../fonts/RIDIBatang.otf') format('opentype');font-display:block;}
+#reader.mode-page {max-width:720px;overflow:hidden;touch-action:pan-y;}
+#reader.mode-page #reader-content {box-sizing:border-box;height:100dvh;padding:26px var(--side-pad);overflow-x:hidden;overflow-y:hidden;}
+#reader.mode-page #text-display {height:100%;column-width:var(--page-column-width);column-gap:calc(var(--side-pad)*2);column-fill:auto;}
+#reader.mode-page #text-display p {break-inside:auto;}
+.reader-spacer {width:1px;pointer-events:none;}
+#sheet[aria-hidden="true"] {visibility:hidden;}
+#sheet[aria-hidden="false"] {visibility:visible;}
+.lib-header-row {flex-wrap:wrap;}
+
+@font-face {font-family: "Pretendard Variable";src:url("../fonts/PretendardVariable.woff2") format("woff2");font-weight:100 900;font-display:block;}
