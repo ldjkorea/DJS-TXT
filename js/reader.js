@@ -106,6 +106,11 @@ class ReaderLayout {
     capture() {
         if (this.busy || !this.paragraphs.length)
             return { ...this.lastPosition };
+        // A restored character can sit inside a wrapped line. Sampling the line's
+        // left edge again would replace it with another character on every reopen.
+        const viewport = this.positionViewport();
+        if (this.positionViewportKey === viewport)
+            return { ...this.lastPosition };
         const contentRect = this.content.getBoundingClientRect(), style = getComputedStyle(this.content);
         const x = Math.max(1, contentRect.left + parseFloat(style.paddingLeft) + 2), y = this.pad + Math.max(4, cfg.font * 0.6);
         let caret = document.caretRangeFromPoint?.(x, y), p = caret?.startContainer;
@@ -150,7 +155,12 @@ class ReaderLayout {
         const position = { pIdx, charOffset, windowStart: this.start, offset: Math.max(0, Math.round(this.pad - rect.top)), ratio };
         position.pct = this.percent(position);
         this.lastPosition = position;
+        this.positionViewportKey = viewport;
         return { ...position };
+    }
+    positionViewport() {
+        return [this.page, scrollY, this.content.scrollLeft, this.content.clientWidth,
+            innerHeight, this.pad, cfg.font, cfg.fontFamily, cfg.line, cfg.pad, cfg.gap].join(':');
     }
     percent(pos = this.lastPosition) {
         if (!this.paragraphs.length)
@@ -196,6 +206,7 @@ class ReaderLayout {
         }
         this.lastPosition = { pIdx: index, charOffset: charOffset ?? Math.round((pos.ratio || 0) * p.textContent.length), windowStart: this.start, offset: pos.offset || 0, ratio: pos.ratio || 0 };
         this.lastPosition.pct = this.percent();
+        this.positionViewportKey = charOffset !== null ? this.positionViewport() : null;
         const token = ++this.moveToken;
         requestAnimationFrame(() => requestAnimationFrame(() => { if (token !== this.moveToken)
             return; this.busy = false; this.capture(); this.changed?.(); }));
@@ -261,5 +272,5 @@ class ReaderLayout {
             window.scrollBy({ top: innerHeight * 0.8 * delta, behavior: 'auto' });
     }
     progress(pct) { this.goTo({ pIdx: Math.round((this.paragraphs.length - 1) * Math.max(0, Math.min(100, pct)) / 100), charOffset: 0 }); }
-    stop() { this.fontToken = (this.fontToken || 0) + 1; this.moveToken++; this.paragraphs = []; this.display.replaceChildren(); this.start = 0; this.end = 0; this.busy = false; }
+    stop() { this.fontToken = (this.fontToken || 0) + 1; this.moveToken++; this.paragraphs = []; this.display.replaceChildren(); this.start = 0; this.end = 0; this.positionViewportKey = null; this.busy = false; }
 }
