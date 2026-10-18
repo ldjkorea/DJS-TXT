@@ -1,11 +1,11 @@
-const CACHE = 'novel-reader-v220-r1';
+const CACHE = 'novel-reader-v221';
 const ASSETS = [
   './index.html',
   './manifest.json',
-  './css/app.css?v=220.1',
-  './js/app.js?v=220.1',
-  './js/data.js?v=220.1',
-  './js/reader.js?v=220.1',
+  './css/app.css?v=221',
+  './js/app.js?v=221',
+  './js/data.js?v=221',
+  './js/reader.js?v=221',
   './fonts/RIDIBatang.otf',
   './fonts/PretendardVariable.woff2',
   './icon-192.png',

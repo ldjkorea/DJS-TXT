@@ -33,8 +33,8 @@ import java.net.URL;
 public class AutoUpdater {
     private static final String TAG = "AutoUpdater";
     private static final String VERSION_URL = "https://raw.githubusercontent.com/ldjkorea/DJS-TXT/main/version.json";
-    public static final int CURRENT_VERSION_CODE = 220;
-    public static final String CURRENT_VERSION_NAME = "2.2.0";
+    public static final int CURRENT_VERSION_CODE = 221;
+    public static final String CURRENT_VERSION_NAME = "2.2.1";
 
     private static final AtomicBoolean checking=new AtomicBoolean();
     private static final AtomicBoolean downloading=new AtomicBoolean();
