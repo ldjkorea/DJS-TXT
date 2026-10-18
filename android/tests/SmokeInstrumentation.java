@@ -23,7 +23,15 @@ public class SmokeInstrumentation extends Instrumentation {
             try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){out.write(bytes);out.getFD().sync();}
             JSONObject data=new JSONObject(json),books=data.getJSONObject("books");int bookmarks=0;
             java.util.Iterator<String> keys=books.keys();while(keys.hasNext()){org.json.JSONArray marks=books.getJSONObject(keys.next()).optJSONArray("bookmarks");if(marks!=null)bookmarks+=marks.length();}
-            JSONObject result=new JSONObject();result.put("ok",true);result.put("phase","audit");result.put("books",books.length());result.put("bookmarks",bookmarks);result.put("bytes",bytes.length);result.put("file",file.getAbsolutePath());return result.toString();
+            JSONObject result=new JSONObject();result.put("ok",true);result.put("phase","audit");result.put("books",books.length());result.put("bookmarks",bookmarks);result.put("bytes",bytes.length);result.put("file",file.getAbsolutePath());
+            java.io.File downloaded=new java.io.File(new java.io.File(getTargetContext().getFilesDir(),"updates"),"DJS_TXT_update.apk");
+            if(downloaded.isFile()){
+                java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+                try(java.io.FileInputStream in=new java.io.FileInputStream(downloaded)){byte[] buffer=new byte[16384];int n;while((n=in.read(buffer))!=-1)digest.update(buffer,0,n);}
+                StringBuilder hash=new StringBuilder();for(byte value:digest.digest())hash.append(String.format("%02x",value&255));
+                result.put("downloadSha256",hash.toString());result.put("downloadBytes",downloaded.length());
+            }
+            return result.toString();
         }
     }
     @Override public void onCreate(Bundle args){arguments=args;start();}
